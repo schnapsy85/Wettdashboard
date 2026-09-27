@@ -33,10 +33,15 @@ SPORTS = {
     'NFL': 'americanfootball_nfl',
     'Bundesliga': 'soccer_germany_bundesliga',
     '2. Bundesliga': 'soccer_germany_bundesliga2',
-    '3. Liga': 'soccer_germany_3_liga',
+    '3. Liga': 'soccer_germany_liga3',
 }
+ODDS_CACHE = {'at': 0.0, 'data': None} 
+ODDS_CACHE_TTL = 120.0
 
 def odds_feed():
+    import time
+    if ODDS_CACHE['data'] is not None and time.time() - ODDS_CACHE['at'] < ODDS_CACHE_TTL:
+        return ODDS_CACHE['data']
     key = os.environ.get('THE_ODDS_API_KEY', '').strip()
     if not key:
         return {'status':'unavailable','source':'The Odds API','events':[], 'reason':'THE_ODDS_API_KEY nicht konfiguriert'}
@@ -53,7 +58,9 @@ def odds_feed():
         except Exception as exc:
             if not events:
                 return {'status':'unavailable','source':'The Odds API','events':[], 'reason':type(exc).__name__}
-    return {'status':'available','source':'The Odds API','retrieved_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), 'events':events}
+    result = {'status':'available','source':'The Odds API','retrieved_at':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), 'events':events}
+    ODDS_CACHE.update(at=__import__('time').time(), data=result)
+    return result
 
 def normalize_event(event, league):
     markets = []
