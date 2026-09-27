@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Betting Lab</title><link rel="stylesheet" href="betting.css">
+</head>
+<body>
+<header class="topbar"><div><p class="eyebrow">READ-ONLY-ANALYSE</p><h1>Betting Lab</h1></div><div class="header-status" aria-live="polite"><span class="status-dot"></span><span id="global-status">Daten werden geprüft</span></div></header>
+<nav aria-label="Filter" class="filters"><label>Sport<select id="sport-filter"><option value="all">Alle Sportarten</option><option>Fußball</option><option>Volleyball</option><option>NFL</option></select></label><label>Wettbewerb<select id="competition-filter"><option value="all">Alle Wettbewerbe</option></select></label><button id="refresh" type="button">Daten erneut prüfen</button></nav>
+<main>
+<section class="notice" aria-label="Sicherheitshinweis"><strong>Analyse, keine Garantie und keine Aufforderung zu wetten.</strong><span>Nur Geld einsetzen, dessen Verlust du verkraftest. Pausen einlegen; Verluste nicht jagen.</span></section>
+<section class="summary" aria-label="Datenstatus" id="summary"></section>
+<div class="layout"><section><div class="section-heading"><h2>Ereignisse</h2><span id="count"></span></div><div id="events" class="events" aria-live="polite"></div></section><aside id="detail" aria-label="Ereignisdetails"><h2>Details</h2><p>Wähle ein Ereignis. Live-Daten werden nicht durch Beispielwerte ersetzt.</p></aside></div>
+</main><footer>Modellstatus: nicht geladen · Keine Wettabgabe, keine Konten, keine Einzahlungen.</footer>
+<script src="betting.js"></script>
+</body></html>

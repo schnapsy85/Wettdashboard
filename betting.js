@@ -1,0 +1,21 @@
+const events = [];
+const statuses = ['FRESH','STALE','DELAYED','MISSING','CONFLICTING','NO_CALL','UNAVAILABLE'];
+const $ = id => document.getElementById(id);
+function esc(value) { const node = document.createElement('span'); node.textContent = String(value); return node.innerHTML; }
+function unavailableCard(sport, competition, reason) { return {sport, competition, name:'Keine Live-Daten verfügbar', status:'UNAVAILABLE', reason, source:'Keine bestätigte Quelle', id:'unknown'}; }
+function catalog() { return [
+  unavailableCard('Fußball','Länderspiele','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
+  unavailableCard('Fußball','Bundesliga','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
+  unavailableCard('Fußball','2. Bundesliga','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
+  unavailableCard('Fußball','3. Liga','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
+  unavailableCard('Fußball','Große europäische Ligen','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
+  unavailableCard('Volleyball','Nicht konfiguriert','Coverage-Test fehlt; keine Fußball-/NFL-Daten übertragen.'),
+  unavailableCard('NFL','NFL','Live-Quotenquelle nicht konfiguriert; nflverse liefert keine Live-Quoten.'),
+  unavailableCard('Scorer','Scorer-Märkte','Rolle und Einsatzwahrscheinlichkeit nicht belastbar verfügbar.')
+]; }
+function renderSummary(list) { const counts = Object.fromEntries(statuses.map(s => [s,0])); list.forEach(e => counts[e.status]++); $('summary').innerHTML = statuses.map(s => `<div class="chip"><strong>${counts[s]}</strong><span>${s}</span></div>`).join(''); }
+function renderDetail(e) { $('detail').innerHTML = `<h2>${esc(e.name)}</h2><span class="badge unavailable">${esc(e.status)}</span><dl><div><dt>Sport / Wettbewerb</dt><dd>${esc(e.sport)} · ${esc(e.competition)}</dd></div><div><dt>Event-ID</dt><dd>${esc(e.id)}</dd></div><div><dt>Quelle</dt><dd>${esc(e.source)}</dd></div><div><dt>Saison / Startzeit</dt><dd>Nicht verfügbar</dd></div><div><dt>Abrufzeit</dt><dd>Nicht verfügbar</dd></div><div><dt>Modellversion</dt><dd>Nicht konfiguriert</dd></div><div><dt>Features / Trainingsstand</dt><dd>Nicht verfügbar</dd></div><div><dt>Cutoff</dt><dd>Nicht verfügbar</dd></div><div><dt>Reproduzierbarkeit</dt><dd>Nicht verfügbar</dd></div><div><dt>Nächste Prüfung</dt><dd>Nicht terminiert</dd></div></dl><p class="reason">${esc(e.reason)}</p><p><strong>NO_CALL · NO BET</strong><br>Keine belastbare Analyse. Ausgabe bleibt unterdrückt.</p><p class="meta">Einsatzlimit: Nicht personalisiert / keine Einsatzempfehlung.</p>`; }
+function render(list) { renderSummary(list); $('count').textContent = `${list.length} Katalogeinträge`; $('events').innerHTML = list.map((e,i) => `<article class="card" tabindex="0" data-index="${i}"><div class="card-head"><span class="badge unavailable">${esc(e.status)}</span><span class="meta">${esc(e.sport)}</span></div><h3>${esc(e.competition)}</h3><p class="reason">${esc(e.reason)}</p><div class="metrics"><div class="metric"><b>Nicht verfügbar</b><small>Modellwahrscheinlichkeit</small></div><div class="metric"><b>Nicht verfügbar</b><small>Marktquote</small></div><div class="metric"><b>—</b><small>Edge</small></div><div class="metric"><b>Unbekannt</b><small>Unsicherheit</small></div></div></article>`).join(''); document.querySelectorAll('.card').forEach(card => { const select=()=>renderDetail(list[card.dataset.index]); card.addEventListener('click',select); card.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' ') {e.preventDefault();select();}}); }); $('global-status').textContent = 'Keine Live-Daten geladen'; }
+function applyFilters() { const sport=$('sport-filter').value, comp=$('competition-filter').value; render(catalog().filter(e=>(sport==='all'||e.sport===sport)&&(comp==='all'||e.competition===comp))); }
+function fillCompetitions() { $('competition-filter').innerHTML = '<option value="all">Alle Wettbewerbe</option>'+[...new Set(catalog().map(e=>e.competition))].map(e=>`<option>${esc(e)}</option>`).join(''); }
+fillCompetitions(); $('sport-filter').addEventListener('change',applyFilters); $('competition-filter').addEventListener('change',applyFilters); $('refresh').addEventListener('click',applyFilters); applyFilters();
