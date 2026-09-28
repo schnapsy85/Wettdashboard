@@ -128,9 +128,15 @@ def router_stats():
     db = Path.home() / '.9router' / 'db' / 'data.sqlite'
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
-            row = con.execute('SELECT COALESCE(SUM(promptTokens),0), COALESCE(SUM(completionTokens),0), COALESCE(SUM(promptTokens+completionTokens),0), COUNT(*) FROM usageHistory WHERE status = ?', ('ok',)).fetchone()
-        prompt, completion, total, requests = map(int, row)
-        return {'status':'available','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'AVAILABLE','data':{'prompt_tokens':prompt,'completion_tokens':completion,'total_tokens':total,'requests':requests},'reason':'Direkt aus Nine Router usageHistory'}
+            row = con.execute('SELECT COALESCE(SUM(promptTokens),0), COALESCE(SUM(completionTokens),0), COALESCE(SUM(cost),0), COUNT(*) FROM usageHistory WHERE status = ?', ('ok',)).fetchone()
+            cached = 0
+            for (raw,) in con.execute('SELECT tokens FROM usageHistory WHERE status = ? AND tokens IS NOT NULL', ('ok',)):
+                try: cached += int(json.loads(raw).get('cached_tokens', 0) or 0)
+                except (TypeError, ValueError, json.JSONDecodeError): pass
+            daily = [json.loads(raw) for (raw,) in con.execute('SELECT data FROM usageDaily ORDER BY dateKey DESC LIMIT 30')]
+        prompt, completion, cost, requests = row
+        total = int(prompt + completion)
+        return {'status':'available','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'AVAILABLE','data':{'prompt_tokens':int(prompt),'completion_tokens':int(completion),'cached_tokens':cached,'total_tokens':total,'requests':requests,'cost':round(float(cost), 4),'savings':'UNAVAILABLE','daily':daily},'reason':'Direkt aus Nine Router usageHistory/usageDaily'}
     except Exception as exc:
         return {'status':'online','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':f'Usage-Datenbank nicht lesbar: {type(exc).__name__}'}
 
