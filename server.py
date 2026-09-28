@@ -30,6 +30,12 @@ def odds_status():
     except Exception as exc:
         return {'status':'unavailable','source':'The Odds API','reason':type(exc).__name__}
 
+DART_SOURCES = {
+    'pdc': 'https://www.pdc.tv/players/',
+    'darts_orakel': 'https://dartsorakel.com/stats/player',
+    'darts_stats': 'https://dartsstats.com/',
+}
+
 SPORTS = {
     'NFL': 'americanfootball_nfl',
     'Bundesliga': 'soccer_germany_bundesliga',
@@ -38,6 +44,10 @@ SPORTS = {
 }
 ODDS_CACHE = {'at': 0.0, 'data': None} 
 ODDS_CACHE_TTL = 120.0
+
+def dart_model_feed():
+    # Fail closed until a licensed/live Dart feed supplies matches, stats and odds.
+    return {'status':'unavailable','sport':'Dart','events':[], 'reason':'Keine verifizierte Live-Dart-Quelle mit Quoten angeschlossen; keine Tipps erfunden.', 'sources':DART_SOURCES, 'required_features':['last_5_matches','three_dart_average','first_9_average','checkout_percentage','doubles_percentage','legs_won_lost','opponent_strength','180s_per_leg','market_line','market_price']}
 
 def odds_feed():
     import time
@@ -182,6 +192,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/tokens': return self.send_json(router_stats())
         if self.path == '/api/odds/status': return self.send_json(odds_status())
         if self.path == '/api/odds': return self.send_json(odds_feed())
+        if self.path == '/api/darts': return self.send_json(dart_model_feed())
         if self.path == '/betting': self.path='/betting.html'
         if self.path == '/': self.path='/index.html'
         file = ROOT / self.path.lstrip('/')
