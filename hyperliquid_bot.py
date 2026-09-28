@@ -28,6 +28,7 @@ def config():
     return {
         "execution": os.getenv("TESTNET_TRADING_ENABLED", "false").lower() == "true",
         "credentials": bool(os.getenv("HYPERLIQUID_TESTNET_PRIVATE_KEY")),
+        "order_adapter": False,
         "environment": "testnet",
         "universe": list(UNIVERSE),
         "risk": RISK.__dict__,
