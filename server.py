@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, socket, subprocess, urllib.request
+import json, os, socket, sqlite3, subprocess, urllib.request
 from collections import defaultdict
 from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -118,13 +118,22 @@ def baseline_model(event):
     return model
 
 def router_stats():
-    # Health is separate from usage; never confuse missing metrics with offline router.
+    # Read real usage from Nine Router's local SQLite database. Never estimate.
+    endpoint = 'http://127.0.0.1:20128/v1'
     try:
         with socket.create_connection(('127.0.0.1', 20128), timeout=2):
             health = 'online'
     except OSError as exc:
-        return {'status':'offline','health':'offline','source':'Nine Router','reason':type(exc).__name__}
-    return {'status':'online','health':health,'source':'Nine Router','endpoint':'http://127.0.0.1:20128/v1','usage':'UNAVAILABLE','reason':'Nine Router stellt keinen messbaren Usage-Endpunkt bereit'}
+        return {'status':'offline','health':'offline','source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':type(exc).__name__}
+    db = Path.home() / '.9router' / 'db' / 'data.sqlite'
+    try:
+        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
+            row = con.execute('SELECT COALESCE(SUM(promptTokens),0), COALESCE(SUM(completionTokens),0), COALESCE(SUM(promptTokens+completionTokens),0), COUNT(*) FROM usageHistory WHERE status = ?', ('ok',)).fetchone()
+        prompt, completion, total, requests = map(int, row)
+        return {'status':'available','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'AVAILABLE','data':{'prompt_tokens':prompt,'completion_tokens':completion,'total_tokens':total,'requests':requests},'reason':'Direkt aus Nine Router usageHistory'}
+    except Exception as exc:
+        return {'status':'online','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':f'Usage-Datenbank nicht lesbar: {type(exc).__name__}'}
+
 
 def systems():
     def run(cmd):
