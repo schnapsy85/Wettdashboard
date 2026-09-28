@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, os, socket, sqlite3, subprocess, urllib.request
+import json, os, shutil, socket, sqlite3, subprocess, urllib.request
 from collections import defaultdict
 from urllib.parse import urlencode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -141,15 +141,37 @@ def router_stats():
         return {'status':'online','health':health,'source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':f'Usage-Datenbank nicht lesbar: {type(exc).__name__}'}
 
 
+def _port_open(port):
+    try:
+        with socket.create_connection(('127.0.0.1', port), timeout=1): return True
+    except OSError: return False
+
 def systems():
     def run(cmd):
         try: return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2).strip()
         except Exception: return 'UNAVAILABLE'
+    def number(path, divisor=1):
+        try: return round(int(Path(path).read_text().strip()) / divisor, 1)
+        except Exception: return None
+    mem = {}
+    try:
+        for line in Path('/proc/meminfo').read_text().splitlines():
+            k, v = line.split(':', 1); mem[k] = int(v.split()[0]) * 1024
+    except Exception: pass
+    disk = shutil.disk_usage('/')
+    try: temp = number('/sys/class/thermal/thermal_zone0/temp', 1000)
+    except Exception: temp = None
+    router = 'online' if _port_open(20128) else 'offline'
     return {'gateway':run(['systemctl','--user','is-active','hermes-gateway.service']),
-            'router':run(['systemctl','--user','is-active','nine-router.service']),
+            'router':router,
             'dashboard':run(['systemctl','--user','is-active','dashboard.service']),
-            'disk':run(['sh','-c','df -h / | awk \'NR==2 {print $5}\'']),
-            'load':run(['sh','-c','awk "{print $1, $2, $3}" /proc/loadavg'])}
+            'cpu_load':run(['sh','-c','awk "{print $1, $2, $3}" /proc/loadavg']),
+            'temperature':temp,
+            'memory_available':mem.get('MemAvailable'),
+            'memory_total':mem.get('MemTotal'),
+            'disk_available':disk.free,
+            'disk_total':disk.total,
+            'disk_percent':round((disk.used / disk.total) * 100, 1)}
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
