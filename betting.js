@@ -14,7 +14,6 @@ function catalog(feed=[]) { return feed.length ? feed.map(e => ({...e, name:`${e
   unavailableCard('Fußball','Große europäische Ligen','Provider und Lizenz für diesen Datenabruf nicht konfiguriert.'),
   unavailableCard('Volleyball','Nicht konfiguriert','Coverage-Test fehlt; keine Fußball-/NFL-Daten übertragen.'),
   unavailableCard('NFL','NFL','Live-Quotenquelle nicht konfiguriert; nflverse liefert keine Live-Quoten.'),
-  unavailableCard('Dart','Dart-Märkte','The Odds API meldet aktuell keine Dart-Sportart. Spielerform, Matchstatistik und 180er-Märkte bleiben deshalb NO_CALL.'),
   unavailableCard('Scorer','Scorer-Märkte','Rolle und Einsatzwahrscheinlichkeit nicht belastbar verfügbar.')
 ]; }
 function renderSummary(list) { const counts = Object.fromEntries(statuses.map(s => [s,0])); list.forEach(e => counts[e.status]++); $('summary').innerHTML = statuses.map(s => `<div class="chip"><strong>${counts[s]}</strong><span>${s}</span></div>`).join(''); }
