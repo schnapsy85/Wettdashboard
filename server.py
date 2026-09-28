@@ -2,6 +2,7 @@
 import json, os, shutil, socket, sqlite3, subprocess, urllib.request
 from collections import defaultdict
 from urllib.parse import urlencode
+import hyperliquid_bot
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -181,6 +182,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/systems': return self.send_json(systems())
         if self.path == '/api/tokens': return self.send_json(router_stats())
         if self.path == '/api/odds/status': return self.send_json(odds_status())
+        if self.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
+        if self.path == '/trading': self.path='/trading.html'
         if self.path == '/api/odds': return self.send_json(odds_feed())
         if self.path == '/betting': self.path='/betting.html'
         if self.path == '/': self.path='/index.html'
