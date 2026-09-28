@@ -165,7 +165,7 @@ def systems():
     return {'gateway':run(['systemctl','--user','is-active','hermes-gateway.service']),
             'router':router,
             'dashboard':run(['systemctl','--user','is-active','dashboard.service']),
-            'cpu_load':run(['sh','-c','awk "{print $1, $2, $3}" /proc/loadavg']),
+            'cpu_load':run(['sh','-c',"awk '{print $1, $2, $3}' /proc/loadavg"]),
             'temperature':temp,
             'memory_available':mem.get('MemAvailable'),
             'memory_total':mem.get('MemTotal'),
