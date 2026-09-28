@@ -113,7 +113,10 @@ def baseline_model(event):
                 'edge': None, 'edge_percent': None, 'confidence': 0, 'rationale': 'Keine verifizierte unabhängige Marktgruppe.',
                 'status': 'NO_CALL'}
     _, model = max(candidates, key=lambda item: item[0])
-    model['status'] = 'CALL' if model['edge'] >= 0.05 and model['confidence'] >= 0.68 else 'NO_CALL'
+    # Market consensus is not an independent prediction. Prefer hit probability and fail closed.
+    model['status'] = 'CALL' if (model['edge'] >= 0.05 and model['confidence'] >= 0.68 and model['model_probability'] >= 0.35) else 'NO_CALL'
+    if model['model_probability'] < 0.35:
+        model['rationale'] = 'NO_CALL: Gewinnwahrscheinlichkeit unter 35%; Markt-Konsens allein reicht nicht für einen Tipp.'
     model['tip_text'] = f"{model['status']} · {model['selection']} · {model['market']} · Fair {model['fair_quote']:.2f} · Markt {model['market_price']:.2f}"
     return model
 
