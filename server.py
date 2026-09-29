@@ -253,6 +253,22 @@ def _port_open(port):
         with socket.create_connection(('127.0.0.1', port), timeout=1): return True
     except OSError: return False
 
+def agent_stats():
+    """Read-only local profile/gateway inventory; no secrets or task payloads."""
+    profiles_root = Path.home() / '.hermes' / 'profiles'
+    names = ['default']
+    if profiles_root.is_dir():
+        names += sorted(p.name for p in profiles_root.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name != 'default')
+    agents = []
+    for name in names:
+        unit = f'hermes-gateway-{name}.service' if name != 'default' else 'hermes-gateway.service'
+        try:
+            state = subprocess.check_output(['systemctl','--user','is-active',unit], text=True, stderr=subprocess.DEVNULL, timeout=1).strip()
+        except Exception:
+            state = 'stopped'
+        agents.append({'name': name, 'state': state, 'unit': unit})
+    return {'source':'lokale Hermes-Profile und systemd-user units', 'profiles':len(agents), 'active':sum(a['state']=='active' for a in agents), 'agents':agents}
+
 def systems():
     def run(cmd):
         try: return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2).strip()
@@ -287,6 +303,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path.startswith('/api/finance/'):
             return self.finance_get(parsed.path)
         if self.path == '/api/systems': return self.send_json(systems())
+        if self.path == '/api/agents': return self.send_json(agent_stats())
         if self.path == '/api/tokens': return self.send_json(router_stats())
         if self.path == '/api/odds/status': return self.send_json(odds_status())
         if self.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
