@@ -4,7 +4,7 @@
 @media(max-width:700px){.site-nav{align-items:flex-start;gap:12px;flex-direction:column}.nav-links{width:100%;overflow:auto}.nav-links a{white-space:nowrap}}
 button,select,input{min-height:var(--touch)}
 button,.card{cursor:pointer}
-button:focus-visible,.card:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--cyan);outline-offset:2px}
+button:focus-visible,.card:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--cyan);outline-offset:2px}.site-nav{border-radius:16px;margin:0 auto 18px;box-shadow:0 20px 60px #0004}.site-nav .brand{letter-spacing:-.03em}.nav-links a{min-height:44px;display:flex;align-items:center}.topbar,main,footer{background:transparent}.card,.panel,aside{border-radius:20px;box-shadow:0 20px 60px #0004}.card:hover,.panel:hover{transform:translateY(-2px);transition:.2s transform,.2s border-color}.svc{display:block;text-decoration:none;min-height:164px}.svc:hover{color:var(--text);transform:translateY(-4px)}body{background:radial-gradient(circle at 70% 0,#241456 0,transparent 32%),var(--bg)}button,select,input{border-radius:12px}
 .summary{display:grid;grid-template-columns:repeat(7,minmax(90px,1fr));gap:10px}
 .chip{min-height:64px;padding:12px;border:1px solid var(--line);background:var(--surface);display:grid;align-content:center;gap:3px}
 .chip strong{font-size:22px;color:var(--text)}.chip span,.meta,small{color:var(--muted)}
