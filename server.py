@@ -4,6 +4,18 @@ from collections import defaultdict
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlencode, urlparse
 import hyperliquid_bot
+
+FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
+
+def fantasy_data(query):
+    try:
+        url = FANTASY_API + '/intelligence/league/1389346968114851840?' + urlencode(query)
+        req = urllib.request.Request(url, headers={'User-Agent': 'Hermes-Dashboard/1.0'})
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return json.loads(response.read())
+    except Exception as exc:
+        return {'error': 'Fantasy Backend nicht erreichbar', 'reason': type(exc).__name__}
+
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -307,6 +319,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/api/tokens': return self.send_json(router_stats())
         if self.path == '/api/odds/status': return self.send_json(odds_status())
         if self.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
+        if parsed.path == '/api/fantasy':
+            q = parse_qs(parsed.query)
+            return self.send_json(fantasy_data({'username': q.get('username', ['schn4psy'])[0], 'season': q.get('season', ['2026'])[0], 'week': q.get('week', ['4'])[0], 'include_free_agents': q.get('include_free_agents', ['true'])[0], 'free_agent_limit': min(int(q.get('free_agent_limit', ['25'])[0]), 200)}))
+        if self.path == '/fantasy': self.path='/fantasy.html'
         if self.path == '/trading': self.path='/trading.html'
         if self.path == '/api/odds': return self.send_json(odds_feed())
         if self.path == '/betting': self.path='/betting.html'
