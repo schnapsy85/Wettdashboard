@@ -9,10 +9,23 @@ FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip(
 
 def fantasy_data(query):
     try:
-        url = FANTASY_API + '/intelligence/league/1389346968114851840?' + urlencode(query)
-        req = urllib.request.Request(url, headers={'User-Agent': 'Hermes-Dashboard/1.0'})
-        with urllib.request.urlopen(req, timeout=20) as response:
-            return json.loads(response.read())
+        headers = {'User-Agent': 'Hermes-Dashboard/1.0'}
+        base = FANTASY_API + '/intelligence/league/1389346968114851840?'
+        with urllib.request.urlopen(urllib.request.Request(base + urlencode(query), headers=headers), timeout=20) as response:
+            data = json.loads(response.read())
+        report_q = {k: query[k] for k in ('username', 'season', 'week') if k in query}
+        report_url = FANTASY_API + '/intelligence/league/1389346968114851840/scoring-report?' + urlencode(report_q)
+        status_url = FANTASY_API + '/sleeper/projections/' + str(query.get('season', 2026)) + '/' + str(query.get('week', 4))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(report_url, headers=headers), timeout=20) as response:
+                data['scoring_report'] = json.loads(response.read())
+            with urllib.request.urlopen(urllib.request.Request(status_url, headers=headers), timeout=20) as response:
+                projection_status = json.loads(response.read())
+            data['scoring_report']['status'] = projection_status.get('status', 'MISSING')
+            data['scoring_report']['projection_status'] = projection_status
+        except Exception as exc:
+            data['scoring_report'] = {'status': 'ERROR', 'error': type(exc).__name__}
+        return data
     except Exception as exc:
         return {'error': 'Fantasy Backend nicht erreichbar', 'reason': type(exc).__name__}
 
