@@ -15,7 +15,13 @@ def fantasy_data(query):
             data = json.loads(response.read())
         report_q = {k: query[k] for k in ('username', 'season', 'week') if k in query}
         report_url = FANTASY_API + '/intelligence/league/1389346968114851840/scoring-report?' + urlencode(report_q)
+        lineup_url = FANTASY_API + '/intelligence/league/1389346968114851840/lineup?' + urlencode(report_q)
         status_url = FANTASY_API + '/sleeper/projections/' + str(query.get('season', 2026)) + '/' + str(query.get('week', 4))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(lineup_url, headers=headers), timeout=20) as response:
+                data['lineup_intelligence'] = json.loads(response.read())
+        except Exception as exc:
+            data['lineup_intelligence'] = {'status': 'ERROR', 'error': type(exc).__name__}
         try:
             with urllib.request.urlopen(urllib.request.Request(report_url, headers=headers), timeout=20) as response:
                 data['scoring_report'] = json.loads(response.read())
