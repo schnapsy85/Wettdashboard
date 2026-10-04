@@ -2,7 +2,7 @@
 import csv, hashlib, hmac, io, json, os, secrets, shutil, socket, sqlite3, subprocess, urllib.request
 from collections import defaultdict
 from datetime import date, datetime
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlsplit
 import hyperliquid_bot
 
 FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
@@ -300,6 +300,25 @@ def agent_stats():
         agents.append({'name': name, 'state': state, 'unit': unit})
     return {'source':'lokale Hermes-Profile und systemd-user units', 'profiles':len(agents), 'active':sum(a['state']=='active' for a in agents), 'agents':agents}
 
+def engineering_status():
+    """Bounded, read-only status summary; never exposes command output or secrets."""
+    retrieved_at = datetime.now().astimezone().isoformat(timespec='seconds')
+    def source(name, status, value, origin, error=None):
+        return {'name': name, 'status': status, 'value': value, 'source': origin, 'error': error}
+    try:
+        gateway = subprocess.check_output(['systemctl', '--user', 'is-active', 'hermes-gateway.service'], text=True, stderr=subprocess.DEVNULL, timeout=1).strip()
+    except Exception:
+        gateway = 'stopped'
+    gateway_ok = gateway == 'active'
+    router_ok = _port_open(20128)
+    items = [
+        source('Hermes gateway', 'AVAILABLE' if gateway_ok else 'UNAVAILABLE', gateway if gateway_ok else None, 'systemd user unit', None if gateway_ok else 'gateway stopped or unsupported'),
+        source('Nine Router', 'AVAILABLE' if router_ok else 'UNAVAILABLE', 'online' if router_ok else None, '127.0.0.1:20128', None if router_ok else 'router unavailable'),
+        source('Dashboard', 'AVAILABLE', 'online', 'local dashboard server'),
+    ]
+    return {'overall': 'AVAILABLE' if gateway_ok and router_ok else 'UNAVAILABLE', 'retrieved_at': retrieved_at, 'sources': items}
+
+
 def systems():
     def run(cmd):
         try: return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL, timeout=2).strip()
@@ -329,31 +348,34 @@ def systems():
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        parsed = urlparse(self.path)
+        parsed = urlsplit(self.path)
         if parsed.path == '/finanzen.html': self.path = '/finanzen.html'
         if parsed.path.startswith('/api/finance/'):
             return self.finance_get(parsed.path)
-        if self.path == '/api/systems': return self.send_json(systems())
-        if self.path == '/api/agents': return self.send_json(agent_stats())
-        if self.path == '/api/tokens': return self.send_json(router_stats())
-        if self.path == '/api/odds/status': return self.send_json(odds_status())
-        if self.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
+        if parsed.path == '/api/systems': return self.send_json(systems())
+        if parsed.path == '/api/engineering-status': return self.send_json(engineering_status())
+        if parsed.path == '/api/agents': return self.send_json(agent_stats())
+        if parsed.path == '/api/tokens': return self.send_json(router_stats())
+        if parsed.path == '/api/odds/status': return self.send_json(odds_status())
+        if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
         if parsed.path == '/api/fantasy':
             q = parse_qs(parsed.query)
             return self.send_json(fantasy_data({'username': q.get('username', ['schn4psy'])[0], 'season': q.get('season', ['2026'])[0], 'week': q.get('week', ['4'])[0], 'include_free_agents': q.get('include_free_agents', ['true'])[0], 'free_agent_limit': min(int(q.get('free_agent_limit', ['25'])[0]), 200)}))
-        if self.path == '/fantasy': self.path='/fantasy.html'
-        if self.path == '/trading': self.path='/trading.html'
-        if self.path == '/api/odds': return self.send_json(odds_feed())
-        if self.path == '/betting': self.path='/betting.html'
-        if self.path == '/': self.path='/index.html'
+        if parsed.path == '/fantasy': self.path='/fantasy.html'
+        if parsed.path == '/trading': self.path='/trading.html'
+        if parsed.path == '/api/odds': return self.send_json(odds_feed())
+        if parsed.path == '/betting': self.path='/betting.html'
+        if parsed.path == '/': self.path='/index.html'
         file = ROOT / self.path.lstrip('/')
         if file.is_file() and ROOT in file.parents:
             body=file.read_bytes(); types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8'}; self.send_response(200); self.send_header('Content-Type',types.get(file.suffix,'application/octet-stream')); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
     def do_POST(self):
-        parsed = urlparse(self.path)
+        parsed = urlsplit(self.path)
         if parsed.path.startswith('/api/finance/'):
             return self.finance_post(parsed.path)
+        if parsed.path == '/api/engineering-status':
+            return self.send_json({'error': 'Method not allowed'}, 405, allow='GET')
         self.send_error(404)
     def read_body(self):
         length = int(self.headers.get('Content-Length', '0'))
@@ -423,8 +445,10 @@ class Handler(BaseHTTPRequestHandler):
         except (KeyError, TypeError, ValueError, UnicodeError, sqlite3.Error) as exc:
             self.send_json({'error': str(exc)[:200]}, 400)
         finally: con.close()
-    def send_json(self, obj, status=200):
-        body=json.dumps(obj, ensure_ascii=False).encode(); self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+    def send_json(self, obj, status=200, allow=None):
+        body=json.dumps(obj, ensure_ascii=False).encode(); self.send_response(status); self.send_header('Content-Type','application/json; charset=utf-8'); self.send_header('Cache-Control','no-store'); self.send_header('Content-Length',str(len(body)))
+        if allow: self.send_header('Allow', allow)
+        self.end_headers(); self.wfile.write(body)
     def log_message(self,*args): pass
 
 if __name__ == '__main__':
