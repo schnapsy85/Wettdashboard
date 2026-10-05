@@ -300,6 +300,27 @@ def agent_stats():
         agents.append({'name': name, 'state': state, 'unit': unit})
     return {'source':'lokale Hermes-Profile und systemd-user units', 'profiles':len(agents), 'active':sum(a['state']=='active' for a in agents), 'agents':agents}
 
+def telemetry():
+    """Read-only snapshot from Hermes Kanban DB; omit unverifiable details."""
+    db = Path.home() / '.hermes' / 'kanban.db'
+    result = {'status': 'UNAVAILABLE', 'source': str(db), 'agents': [], 'tasks': {}, 'projects': {}}
+    try:
+        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
+            rows = con.execute('SELECT assignee, status, COUNT(*) FROM tasks GROUP BY assignee, status').fetchall()
+            task_counts = con.execute('SELECT status, COUNT(*) FROM tasks GROUP BY status').fetchall()
+            project_counts = con.execute("SELECT COALESCE(project_id, 'UNAVAILABLE'), COUNT(*) FROM tasks GROUP BY project_id").fetchall()
+        agents = {}
+        for assignee, status, count in rows:
+            name = assignee or 'UNAVAILABLE'
+            agents.setdefault(name, {})[status or 'UNAVAILABLE'] = count
+        task_counts = [(status or 'UNAVAILABLE', count) for status, count in task_counts]
+        result.update(status='AVAILABLE', agents=[{'name': name, 'tasks': counts} for name, counts in sorted(agents.items())],
+                      tasks=dict(task_counts), projects=dict(project_counts))
+    except (OSError, sqlite3.Error):
+        pass
+    return result
+
+
 def engineering_status():
     """Bounded, read-only status summary; never exposes command output or secrets."""
     retrieved_at = datetime.now().astimezone().isoformat(timespec='seconds')
@@ -355,6 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/systems': return self.send_json(systems())
         if parsed.path == '/api/engineering-status': return self.send_json(engineering_status())
         if parsed.path == '/api/agents': return self.send_json(agent_stats())
+        if parsed.path == '/api/telemetry': return self.send_json(telemetry())
         if parsed.path == '/api/tokens': return self.send_json(router_stats())
         if parsed.path == '/api/odds/status': return self.send_json(odds_status())
         if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
@@ -374,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         if parsed.path.startswith('/api/finance/'):
             return self.finance_post(parsed.path)
-        if parsed.path == '/api/engineering-status':
+        if parsed.path in ('/api/engineering-status', '/api/telemetry'):
             return self.send_json({'error': 'Method not allowed'}, 405, allow='GET')
         self.send_error(404)
     def read_body(self):
