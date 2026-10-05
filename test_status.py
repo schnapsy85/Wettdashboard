@@ -41,12 +41,17 @@ class StatusTests(unittest.TestCase):
         conn.close()
         return response.status, body
 
-    def test_conversation_fails_closed_without_fake_response(self):
+    def test_conversation_uses_real_router_or_fails_closed(self):
         status, body = self.request('POST', '/api/conversation', json.dumps({'message': 'hello'}), {'Content-Type': 'application/json'})
         payload = json.loads(body)
-        self.assertEqual(status, 503)
-        self.assertIn('error', payload)
-        self.assertNotIn('response', payload)
+        self.assertIn(status, {200, 503})
+        if status == 200:
+            self.assertIsInstance(payload.get('response'), str)
+            self.assertTrue(payload['response'].strip())
+        else:
+            self.assertIn('error', payload)
+            self.assertNotIn('response', payload)
+        self.assertNotIn('fake', json.dumps(payload).lower())
 
     def test_conversation_rejects_invalid_and_oversize_input(self):
         for body in (b'{', json.dumps({'message': 'x' * (server.CONVERSATION_MAX_INPUT + 1)}).encode()):

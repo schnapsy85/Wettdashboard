@@ -342,13 +342,36 @@ def engineering_status():
 CONVERSATION_MAX_INPUT = 4000
 
 def conversation(message):
-    """Fail closed until authenticated local Hermes invocation is proven safe."""
+    """Route text through local authenticated NineRouter without exposing credentials."""
     if not isinstance(message, str) or not message.strip():
         raise ValueError('Nachricht fehlt')
     if len(message) > CONVERSATION_MAX_INPUT:
         raise ValueError('Nachricht zu lang')
-    return {'error': 'Lokaler Hermes-Adapter nicht verfügbar',
-            'reason': 'Authentifizierter lokaler Aufruf nicht nachgewiesen'}
+    key = os.environ.get('NINEROUTER_API_KEY', '').strip()
+    base_url = 'http://127.0.0.1:20128/v1'
+    config = Path.home() / '.hermes' / 'config.yaml'
+    if not key and config.exists():
+        for line in config.read_text(errors='replace').splitlines():
+            if line.startswith('  api_key: '): key = line.split(':', 1)[1].strip().strip('"').strip("'")
+            elif line.startswith('  base_url: '): base_url = line.split(':', 1)[1].strip().strip('"').strip("'")
+    if not key:
+        return {'error': 'Lokaler Hermes-Adapter nicht verfügbar', 'reason': 'Hermes-Provider nicht konfiguriert'}
+    payload = json.dumps({'model': 'cx/gpt-5.6-luna', 'messages': [{'role': 'user', 'content': message}], 'stream': False}).encode()
+    request = urllib.request.Request(base_url.rstrip('/') + '/chat/completions', data=payload,
+        headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.loads(response.read())
+        text = data.get('choices', [{}])[0].get('message', {}).get('content')
+        if not isinstance(text, str) or not text.strip():
+            return {'error': 'Keine verwertbare Modellantwort', 'reason': 'NineRouter response missing content'}
+        return {'response': text.strip(), 'model': 'cx/gpt-5.6-luna'}
+    except urllib.error.HTTPError as exc:
+        return {'error': 'NineRouter-Anfrage fehlgeschlagen', 'reason': f'HTTP {exc.code}'}
+    except (OSError, json.JSONDecodeError):
+        return {'error': 'NineRouter nicht erreichbar', 'reason': 'lokaler Router nicht verfügbar'}
+    except Exception:
+        return {'error': 'NineRouter-Anfrage fehlgeschlagen', 'reason': 'unbekannter lokaler Adapterfehler'}
 
 
 def systems():
@@ -416,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                 result = conversation(message)
             except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
                 return self.send_json({'error': str(exc)[:200]}, 400)
-            return self.send_json(result, 503)
+            return self.send_json(result, 200 if 'response' in result else 503)
         self.send_error(404)
     def read_body(self):
         length = int(self.headers.get('Content-Length', '0'))
