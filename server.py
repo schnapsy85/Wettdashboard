@@ -363,6 +363,12 @@ def engineering_status():
     return {'overall': 'AVAILABLE' if gateway_ok and router_ok else 'UNAVAILABLE', 'retrieved_at': retrieved_at, 'sources': items}
 
 CONVERSATION_MAX_INPUT = 4000
+def hermes_run(message):
+    """Fail closed until verified native Hermes task-start API is available."""
+    if not isinstance(message, str) or not message.strip() or len(message) > CONVERSATION_MAX_INPUT:
+        raise ValueError('Ungültige Auftragseingabe')
+    return {'status': 'unavailable', 'error': 'Native Hermes run unavailable',
+            'reason': 'Verified native task-start contract missing; no run or session created'}
 
 def conversation(message):
     """Route text through local authenticated NineRouter without exposing credentials."""
@@ -438,6 +444,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/tokens': return self.send_json(router_stats())
         if parsed.path == '/api/odds/status': return self.send_json(odds_status())
         if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
+
         if parsed.path == '/api/fantasy':
             q = parse_qs(parsed.query)
             return self.send_json(fantasy_data({'username': q.get('username', ['schn4psy'])[0], 'season': q.get('season', ['2026'])[0], 'week': q.get('week', ['4'])[0], 'include_free_agents': q.get('include_free_agents', ['true'])[0], 'free_agent_limit': min(int(q.get('free_agent_limit', ['25'])[0]), 200)}))
@@ -464,6 +471,12 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
                 return self.send_json({'error': str(exc)[:200]}, 400)
             return self.send_json(result, 200 if 'response' in result else 503)
+        if parsed.path == '/api/hermes/run':
+            try:
+                payload = json.loads(self.read_body()); run = hermes_run(payload.get('message') if isinstance(payload, dict) else None)
+            except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+                return self.send_json({'error': str(exc)[:200]}, 400)
+            return self.send_json(run, 200 if run['status'] == 'completed' else 503)
         self.send_error(404)
     def read_body(self):
         length = int(self.headers.get('Content-Length', '0'))

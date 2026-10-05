@@ -63,6 +63,13 @@ class StatusTests(unittest.TestCase):
             self.assertNotIn('response', payload)
         self.assertNotIn('fake', json.dumps(payload).lower())
 
+    def test_hermes_run_fails_closed_without_fabricated_ids(self):
+        payload = server.hermes_run('hello')
+        self.assertEqual(payload['status'], 'unavailable')
+        self.assertNotIn('id', payload)
+        self.assertNotIn('session_id', payload)
+        self.assertIn('Verified native task-start contract missing', payload['reason'])
+
     def test_conversation_rejects_invalid_and_oversize_input(self):
         for body in (b'{', json.dumps({'message': 'x' * (server.CONVERSATION_MAX_INPUT + 1)}).encode()):
             status, _ = self.request('POST', '/api/conversation', body, {'Content-Type': 'application/json'})
