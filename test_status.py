@@ -33,13 +33,25 @@ class StatusTests(unittest.TestCase):
         cls.thread.join()
         cls.httpd.server_close()
 
-    def request(self, method, path):
+    def request(self, method, path, body=None, headers=None):
         conn = HTTPConnection('127.0.0.1', self.port)
-        conn.request(method, path)
+        conn.request(method, path, body=body, headers=headers or {})
         response = conn.getresponse()
         body = response.read()
         conn.close()
         return response.status, body
+
+    def test_conversation_fails_closed_without_fake_response(self):
+        status, body = self.request('POST', '/api/conversation', json.dumps({'message': 'hello'}), {'Content-Type': 'application/json'})
+        payload = json.loads(body)
+        self.assertEqual(status, 503)
+        self.assertIn('error', payload)
+        self.assertNotIn('response', payload)
+
+    def test_conversation_rejects_invalid_and_oversize_input(self):
+        for body in (b'{', json.dumps({'message': 'x' * (server.CONVERSATION_MAX_INPUT + 1)}).encode()):
+            status, _ = self.request('POST', '/api/conversation', body, {'Content-Type': 'application/json'})
+            self.assertEqual(status, 400)
 
     def test_telemetry_is_read_only_and_bounded(self):
         payload = server.telemetry()

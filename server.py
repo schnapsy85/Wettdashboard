@@ -339,6 +339,17 @@ def engineering_status():
     ]
     return {'overall': 'AVAILABLE' if gateway_ok and router_ok else 'UNAVAILABLE', 'retrieved_at': retrieved_at, 'sources': items}
 
+CONVERSATION_MAX_INPUT = 4000
+
+def conversation(message):
+    """Fail closed until authenticated local Hermes invocation is proven safe."""
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError('Nachricht fehlt')
+    if len(message) > CONVERSATION_MAX_INPUT:
+        raise ValueError('Nachricht zu lang')
+    return {'error': 'Lokaler Hermes-Adapter nicht verfügbar',
+            'reason': 'Authentifizierter lokaler Aufruf nicht nachgewiesen'}
+
 
 def systems():
     def run(cmd):
@@ -398,6 +409,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.finance_post(parsed.path)
         if parsed.path in ('/api/engineering-status', '/api/telemetry'):
             return self.send_json({'error': 'Method not allowed'}, 405, allow='GET')
+        if parsed.path == '/api/conversation':
+            try:
+                payload = json.loads(self.read_body())
+                message = payload.get('message') if isinstance(payload, dict) else None
+                result = conversation(message)
+            except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+                return self.send_json({'error': str(exc)[:200]}, 400)
+            return self.send_json(result, 503)
         self.send_error(404)
     def read_body(self):
         length = int(self.headers.get('Content-Length', '0'))
