@@ -39,7 +39,30 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).parent
+def hermes_home():
+    return Path(os.environ.get('HERMES_HOME', str(Path.home() / '.hermes'))).expanduser()
 FINANCE_DB = ROOT / 'finanzen.sqlite3'
+
+JARVIS_DEFAULT_CONFIG = {
+    'theme': {'bg': '#0a0b1e', 'surface': '#15162e', 'cyan': '#09d6ff', 'text': '#f7f8ff'},
+    'layout': ['mission-control', 'voice-link', 'data-policy'],
+}
+
+def jarvis_config():
+    """Return bounded local config; malformed or missing config fails closed."""
+    path = ROOT / 'jarvis.config.json'
+    try:
+        if not path.is_file():
+            return {**JARVIS_DEFAULT_CONFIG, 'theme': dict(JARVIS_DEFAULT_CONFIG['theme']), 'layout': list(JARVIS_DEFAULT_CONFIG['layout']), 'source': 'defaults'}
+        raw = json.loads(path.read_text())
+        theme = raw.get('theme', {}) if isinstance(raw, dict) else {}
+        layout = raw.get('layout', []) if isinstance(raw, dict) else []
+        if not isinstance(theme, dict) or not isinstance(layout, list): raise ValueError
+        colors = {k: v for k, v in theme.items() if k in JARVIS_DEFAULT_CONFIG['theme'] and isinstance(v, str) and len(v) <= 32}
+        widgets = [x for x in layout if isinstance(x, str) and x in JARVIS_DEFAULT_CONFIG['layout']]
+        return {'theme': {**JARVIS_DEFAULT_CONFIG['theme'], **colors}, 'layout': widgets or JARVIS_DEFAULT_CONFIG['layout'], 'source': 'local'}
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {**JARVIS_DEFAULT_CONFIG, 'theme': dict(JARVIS_DEFAULT_CONFIG['theme']), 'layout': list(JARVIS_DEFAULT_CONFIG['layout']), 'source': 'defaults'}
 FINANCE_BACKUP_DIR = ROOT / 'backups'
 FINANCE_SESSIONS = {}
 FINANCE_PREVIEWS = {}
@@ -143,7 +166,7 @@ def finance_parse_csv(raw, account_kind):
     return result
 
 def load_local_env():
-    p = Path.home() / '.hermes' / '.env'
+    p = hermes_home() / '.env'
     if not p.exists():
         return
     for line in p.read_text(errors='replace').splitlines():
@@ -263,7 +286,7 @@ def router_stats():
             health = 'online'
     except OSError as exc:
         return {'status':'offline','health':'offline','source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':type(exc).__name__}
-    db = Path.home() / '.9router' / 'db' / 'data.sqlite'
+    db = Path(os.environ.get('NINEROUTER_USAGE_DB', str(Path.home() / '.9router' / 'db' / 'data.sqlite'))).expanduser()
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
             row = con.execute('SELECT COALESCE(SUM(promptTokens),0), COALESCE(SUM(completionTokens),0), COALESCE(SUM(cost),0), COUNT(*) FROM usageHistory WHERE status = ?', ('ok',)).fetchone()
@@ -286,7 +309,7 @@ def _port_open(port):
 
 def agent_stats():
     """Read-only local profile/gateway inventory; no secrets or task payloads."""
-    profiles_root = Path.home() / '.hermes' / 'profiles'
+    profiles_root = hermes_home() / 'profiles'
     names = ['default']
     if profiles_root.is_dir():
         names += sorted(p.name for p in profiles_root.iterdir() if p.is_dir() and not p.name.startswith('.') and p.name != 'default')
@@ -302,7 +325,7 @@ def agent_stats():
 
 def telemetry():
     """Read-only snapshot from Hermes Kanban DB; omit unverifiable details."""
-    db = Path.home() / '.hermes' / 'kanban.db'
+    db = hermes_home() / 'kanban.db'
     result = {'status': 'UNAVAILABLE', 'source': str(db), 'agents': [], 'tasks': {}, 'projects': {}}
     try:
         with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
@@ -349,7 +372,7 @@ def conversation(message):
         raise ValueError('Nachricht zu lang')
     key = os.environ.get('NINEROUTER_API_KEY', '').strip()
     base_url = 'http://127.0.0.1:20128/v1'
-    config = Path.home() / '.hermes' / 'config.yaml'
+    config = hermes_home() / 'config.yaml'
     if not key and config.exists():
         for line in config.read_text(errors='replace').splitlines():
             if line.startswith('  api_key: '): key = line.split(':', 1)[1].strip().strip('"').strip("'")
@@ -411,6 +434,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/engineering-status': return self.send_json(engineering_status())
         if parsed.path == '/api/agents': return self.send_json(agent_stats())
         if parsed.path == '/api/telemetry': return self.send_json(telemetry())
+        if parsed.path == '/api/jarvis-config': return self.send_json(jarvis_config())
         if parsed.path == '/api/tokens': return self.send_json(router_stats())
         if parsed.path == '/api/odds/status': return self.send_json(odds_status())
         if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})

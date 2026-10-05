@@ -1,6 +1,7 @@
 import unittest
 import server
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -10,6 +11,15 @@ from unittest.mock import patch
 
 
 class StatusTests(unittest.TestCase):
+    def test_load_local_env_uses_custom_hermes_home(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / '.env').write_text('DASHBOARD_TEST_LOCAL_ENV=loaded\n')
+            with patch.dict(os.environ, {'HERMES_HOME': directory}, clear=False):
+                os.environ.pop('DASHBOARD_TEST_LOCAL_ENV', None)
+                server.load_local_env()
+                self.assertEqual(os.environ.get('DASHBOARD_TEST_LOCAL_ENV'), 'loaded')
+                os.environ.pop('DASHBOARD_TEST_LOCAL_ENV', None)
+
     def test_engineering_status_has_stable_read_only_shape(self):
         payload = server.engineering_status()
         self.assertEqual(set(payload), {'overall', 'retrieved_at', 'sources'})
@@ -57,6 +67,37 @@ class StatusTests(unittest.TestCase):
         for body in (b'{', json.dumps({'message': 'x' * (server.CONVERSATION_MAX_INPUT + 1)}).encode()):
             status, _ = self.request('POST', '/api/conversation', body, {'Content-Type': 'application/json'})
             self.assertEqual(status, 400)
+
+    def test_jarvis_config_defaults_and_http_contract(self):
+        payload = server.jarvis_config()
+        self.assertEqual(payload['source'], 'defaults')
+        self.assertEqual(payload['layout'], ['mission-control', 'voice-link', 'data-policy'])
+        status, body = self.request('GET', '/api/jarvis-config')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['theme']['cyan'], '#09d6ff')
+
+    def test_jarvis_shell_config_runtime_contract(self):
+        html = (server.ROOT / 'index.html').read_text()
+        self.assertIn('data-widget="mission-control"', html)
+        self.assertIn('data-widget="voice-link"', html)
+        self.assertIn('data-widget="data-policy"', html)
+        self.assertIn('new Set(order).forEach', html)
+        self.assertIn('grid.replaceChildren(fragment)', html)
+        self.assertIn('@media(max-width:640px)', html)
+        self.assertIn("fetch('/api/jarvis-config')", html)
+
+    def test_jarvis_config_custom_order_is_preserved(self):
+        config = server.ROOT / 'jarvis.config.json'
+        original = config.read_text() if config.exists() else None
+        try:
+            config.write_text(json.dumps({'layout': ['data-policy', 'mission-control', 'voice-link']}))
+            payload = server.jarvis_config()
+            self.assertEqual(payload['layout'], ['data-policy', 'mission-control', 'voice-link'])
+        finally:
+            if original is None:
+                config.unlink(missing_ok=True)
+            else:
+                config.write_text(original)
 
     def test_telemetry_is_read_only_and_bounded(self):
         payload = server.telemetry()
