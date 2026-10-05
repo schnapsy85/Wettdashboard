@@ -86,6 +86,13 @@ class StatusTests(unittest.TestCase):
         self.assertIn('@media(max-width:640px)', html)
         self.assertIn("fetch('/api/jarvis-config')", html)
 
+    def test_foundation_regions_have_accessible_states(self):
+        html = (server.ROOT / 'index.html').read_text()
+        for marker in ('Engineering System Status', 'Mission Telemetry', 'JARVIS', 'role="status"', 'UNAVAILABLE'):
+            self.assertIn(marker, html)
+        self.assertIn('for="dashboard-search"', html)
+        self.assertIn('id="dashboard-search"', html)
+
     def test_jarvis_config_custom_order_is_preserved(self):
         config = server.ROOT / 'jarvis.config.json'
         original = config.read_text() if config.exists() else None
@@ -124,7 +131,7 @@ class StatusTests(unittest.TestCase):
                     ('coder', 'running', 'dashboard'),
                     ('reviewer', 'todo', None),
                 ])
-            with patch('server.Path.home', return_value=Path(directory)):
+            with patch.dict(os.environ, {'HERMES_HOME': str(Path(directory) / '.hermes')}, clear=False):
                 payload = server.telemetry()
         self.assertEqual(payload['status'], 'AVAILABLE')
         self.assertEqual(payload['tasks'], {'done': 1, 'running': 1, 'todo': 1})
@@ -143,7 +150,7 @@ class StatusTests(unittest.TestCase):
             with sqlite3.connect(db) as con:
                 con.execute('CREATE TABLE tasks (assignee TEXT, status TEXT, project_id TEXT)')
                 con.execute('INSERT INTO tasks VALUES (?, ?, ?)', (None, None, None))
-            with patch('server.Path.home', return_value=Path(directory)):
+            with patch.dict(os.environ, {'HERMES_HOME': str(Path(directory) / '.hermes')}, clear=False):
                 payload = server.telemetry()
         self.assertEqual(payload['agents'], [{'name': 'UNAVAILABLE', 'tasks': {'UNAVAILABLE': 1}}])
         self.assertEqual(payload['tasks'], {'UNAVAILABLE': 1})
