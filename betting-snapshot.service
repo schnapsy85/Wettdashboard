@@ -1,0 +1,8 @@
+[Unit]
+Description=Hermes paper betting odds snapshot
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/yash/dashboard
+ExecStart=/usr/bin/python3 /home/yash/dashboard/betting_snapshot.py

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import csv, hashlib, hmac, io, json, os, secrets, shutil, socket, sqlite3, subprocess, time, urllib.request
 from collections import defaultdict
+from contextlib import closing
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlencode, urlsplit, quote
 import hyperliquid_bot
@@ -194,10 +195,90 @@ SPORTS = {
     '2. Bundesliga': 'soccer_germany_bundesliga2',
     '3. Liga': 'soccer_germany_liga3',
 }
+BETTING_DB = Path(os.environ.get('BETTING_DB', str(Path.home() / '.local' / 'state' / 'hermes-betting' / 'betting.sqlite3'))).expanduser()
+BETTING_SNAPSHOT_MAX_AGE = 1800
+PAPER_BANKROLL_CENTS = 50000
+PAPER_STAKE_CENTS = 250
 ODDS_CACHE = {'at': 0.0, 'data': None} 
 ODDS_CACHE_TTL = 120.0
 
-def odds_feed():
+def _betting_connect():
+    BETTING_DB.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(BETTING_DB)
+    con.row_factory = sqlite3.Row
+    con.executescript('''
+    CREATE TABLE IF NOT EXISTS odds_snapshots (
+        id INTEGER PRIMARY KEY,
+        retrieved_at TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        event_count INTEGER NOT NULL,
+        payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS paper_bets (
+        id INTEGER PRIMARY KEY,
+        snapshot_id INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        market TEXT NOT NULL,
+        selection TEXT NOT NULL,
+        bookmaker TEXT NOT NULL,
+        odds REAL NOT NULL,
+        model_probability REAL NOT NULL,
+        expected_value REAL NOT NULL,
+        stake_cents INTEGER NOT NULL,
+        outcome TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        settled_at TEXT,
+        UNIQUE(snapshot_id, event_id, market, selection, bookmaker)
+    );
+    ''')
+    return con
+
+def save_betting_snapshot(feed):
+    if not isinstance(feed, dict) or feed.get('status') != 'available':
+        raise ValueError('Nur verfügbare Quoten-Snapshots werden gespeichert')
+    retrieved_at = str(feed.get('retrieved_at') or datetime.now().astimezone().isoformat(timespec='seconds'))
+    payload = json.dumps(feed, ensure_ascii=False, separators=(',', ':'))
+    with closing(_betting_connect()) as con:
+        cursor = con.execute('INSERT INTO odds_snapshots(retrieved_at, source, status, event_count, payload) VALUES (?, ?, ?, ?, ?)',
+                             (retrieved_at, str(feed.get('source') or 'UNAVAILABLE'), 'available', len(feed.get('events', [])), payload))
+        con.commit()
+        return {'id': cursor.lastrowid, 'retrieved_at': retrieved_at, 'event_count': len(feed.get('events', []))}
+
+def latest_betting_snapshot():
+    if not BETTING_DB.is_file():
+        return None
+    try:
+        with closing(sqlite3.connect(f'file:{BETTING_DB}?mode=ro', uri=True)) as con:
+            row = con.execute('SELECT id, retrieved_at, source, event_count, payload FROM odds_snapshots ORDER BY id DESC LIMIT 1').fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    try:
+        payload = json.loads(row[4])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    payload.update(id=row[0], snapshot_id=row[0], snapshot_at=row[1], snapshot_source=row[2], snapshot_event_count=row[3])
+    return payload
+
+def _snapshot_age(retrieved_at):
+    try:
+        parsed = datetime.fromisoformat(retrieved_at)
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return max(0, int((datetime.now(parsed.tzinfo) - parsed).total_seconds()))
+    except (TypeError, ValueError):
+        return None
+
+def _with_snapshot_state(feed):
+    snapshot_at = feed.get('snapshot_at')
+    age = _snapshot_age(snapshot_at)
+    feed['snapshot_age_seconds'] = age
+    feed['freshness'] = 'fresh' if age is not None and age <= BETTING_SNAPSHOT_MAX_AGE else 'stale'
+    return feed
+
+def fetch_odds_feed():
     import time
     if ODDS_CACHE['data'] is not None and time.time() - ODDS_CACHE['at'] < ODDS_CACHE_TTL:
         return ODDS_CACHE['data']
@@ -219,6 +300,99 @@ def odds_feed():
     ODDS_CACHE.update(at=__import__('time').time(), data=result)
     return result
 
+def refresh_betting_snapshot():
+    feed = fetch_odds_feed()
+    if feed.get('status') != 'available':
+        return feed
+    saved = save_betting_snapshot(feed)
+    return {**feed, 'snapshot_id': saved['id'], 'snapshot_at': saved['retrieved_at'], 'snapshot_event_count': saved['event_count'], 'freshness': 'fresh', 'snapshot_age_seconds': 0}
+
+def odds_feed():
+    if not os.environ.get('THE_ODDS_API_KEY', '').strip():
+        return {'status': 'unavailable', 'source': 'The Odds API', 'events': [], 'reason': 'THE_ODDS_API_KEY nicht konfiguriert'}
+    snapshot = latest_betting_snapshot()
+    if snapshot is None:
+        return {'status': 'unavailable', 'source': 'The Odds API', 'events': [], 'reason': 'Kein Quoten-Snapshot vorhanden; Snapshot-Timer ausführen'}
+    return _with_snapshot_state(snapshot)
+
+def _paper_bet_rows():
+    if not BETTING_DB.is_file():
+        return []
+    try:
+        with closing(sqlite3.connect(f'file:{BETTING_DB}?mode=ro', uri=True)) as con:
+            con.row_factory = sqlite3.Row
+            return [dict(row) for row in con.execute('SELECT * FROM paper_bets ORDER BY id DESC LIMIT 200')]
+    except sqlite3.Error:
+        return []
+
+def betting_state():
+    feed = odds_feed()
+    bets = _paper_bet_rows()
+    settled = [bet for bet in bets if bet['outcome'] in ('win', 'loss', 'void')]
+    profit_cents = 0
+    settled_stake = 0
+    brier_total = 0.0
+    for bet in settled:
+        stake = int(bet['stake_cents'])
+        settled_stake += stake
+        probability = float(bet['model_probability'])
+        target = 1 if bet['outcome'] == 'win' else 0
+        brier_total += (probability - target) ** 2
+        if bet['outcome'] == 'win':
+            profit_cents += round(stake * (float(bet['odds']) - 1))
+        elif bet['outcome'] == 'loss':
+            profit_cents -= stake
+    metrics = {
+        'bankroll_cents': PAPER_BANKROLL_CENTS,
+        'open_bets': sum(bet['outcome'] == 'open' for bet in bets),
+        'settled_bets': len(settled),
+        'profit_cents': profit_cents,
+        'roi': round(profit_cents / settled_stake, 4) if settled_stake else None,
+        'brier_score': round(brier_total / len(settled), 4) if settled else None,
+        'closing_line_value': 'UNAVAILABLE · Schlussquoten noch nicht gespeichert',
+    }
+    candidates = [event for event in feed.get('events', []) if event.get('status') == 'PAPER']
+    return {'feed': feed, 'candidates': candidates, 'paper_bets': bets, 'metrics': metrics}
+
+def save_paper_bet(payload):
+    if not isinstance(payload, dict):
+        raise ValueError('Ungültige Paper-Wette')
+    required = ('snapshot_id', 'event_id', 'market', 'selection', 'bookmaker', 'odds', 'model_probability', 'expected_value')
+    if any(not payload.get(key) and payload.get(key) != 0 for key in required):
+        raise ValueError('Paper-Wette unvollständig')
+    try:
+        snapshot_id = int(payload['snapshot_id']); odds = float(payload['odds']); probability = float(payload['model_probability']); expected_value = float(payload['expected_value'])
+    except (TypeError, ValueError):
+        raise ValueError('Paper-Wette enthält ungültige Zahlen')
+    if snapshot_id <= 0 or odds <= 1 or not 0 < probability < 1 or expected_value <= 0:
+        raise ValueError('Paper-Wette außerhalb sicherer Grenzen')
+    now = datetime.now().astimezone().isoformat(timespec='seconds')
+    try:
+        with closing(_betting_connect()) as con:
+            cursor = con.execute('''INSERT INTO paper_bets(snapshot_id, event_id, market, selection, bookmaker, odds,
+                model_probability, expected_value, stake_cents, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                (snapshot_id, str(payload['event_id'])[:160], str(payload['market'])[:40], str(payload['selection'])[:160],
+                 str(payload['bookmaker'])[:120], odds, probability, expected_value, PAPER_STAKE_CENTS, now))
+            con.commit()
+            return {'id': cursor.lastrowid, 'status': 'open', 'stake_cents': PAPER_STAKE_CENTS}
+    except sqlite3.IntegrityError:
+        raise ValueError('Paper-Wette für diesen Snapshot bereits gespeichert')
+
+def settle_paper_bet(bet_id, outcome):
+    if outcome not in ('win', 'loss', 'void'):
+        raise ValueError('Ergebnis muss win, loss oder void sein')
+    try:
+        bet_id = int(bet_id)
+    except (TypeError, ValueError):
+        raise ValueError('Ungültige Paper-Wetten-ID')
+    with closing(_betting_connect()) as con:
+        cursor = con.execute("UPDATE paper_bets SET outcome = ?, settled_at = ? WHERE id = ? AND outcome = 'open'",
+                             (outcome, datetime.now().astimezone().isoformat(timespec='seconds'), bet_id))
+        con.commit()
+        if cursor.rowcount != 1:
+            raise ValueError('Paper-Wette nicht offen oder nicht gefunden')
+    return {'id': bet_id, 'outcome': outcome}
+
 def normalize_event(event, league):
     markets = []
     for bookmaker in event.get('bookmakers', []):
@@ -231,7 +405,7 @@ def normalize_event(event, league):
     return result
 
 def baseline_model(event):
-    """Market-consensus model; no team features, fail closed on weak consensus."""
+    """Find paper-only line-shopping candidates; this is not an independent model."""
     groups = defaultdict(list)
     for item in event.get('markets', []):
         market = item.get('market')
@@ -252,29 +426,34 @@ def baseline_model(event):
     for (market, point, name), rows in groups.items():
         if len({row[0] for row in rows}) < 3:
             continue
-        probabilities = [row[1] for row in rows]
-        probability = sum(probabilities) / len(probabilities)
-        spread = (sum((p - probability) ** 2 for p in probabilities) / len(probabilities)) ** 0.5
-        fair_quote = 1 / probability
-        market_price = sorted(row[2] for row in rows)[len(rows) // 2]
-        edge = market_price - fair_quote
-        candidates.append((edge, {'market': market, 'selection': name,
-            'model_probability': round(probability, 6), 'fair_quote': round(fair_quote, 4),
-            'market_price': round(market_price, 4), 'edge': round(edge, 4),
-            'edge_percent': round(edge / fair_quote * 100, 2),
-            'confidence': round(max(0.0, min(1.0, 1 - spread * 4)), 3),
-            'rationale': 'Markt-Konsensmodell; Overround normalisiert; mediane Marktquote.',
-            'status': 'NO_CALL'}))
+        for bookmaker, _probability, price in rows:
+            reference = [row[1] for row in rows if row[0] != bookmaker]
+            if len(reference) < 2:
+                continue
+            probability = sum(reference) / len(reference)
+            spread = (sum((p - probability) ** 2 for p in reference) / len(reference)) ** 0.5
+            fair_quote = 1 / probability
+            expected_value = price * probability - 1
+            edge = price - fair_quote
+            candidates.append((expected_value, {'market': market, 'selection': name,
+                'model_probability': round(probability, 6), 'fair_quote': round(fair_quote, 4),
+                'market_price': round(price, 4), 'edge': round(edge, 4),
+                'edge_percent': round(edge / fair_quote * 100, 2),
+                'expected_value': round(expected_value, 4),
+                'best_bookmaker': bookmaker,
+                'confidence': round(max(0.0, min(1.0, 1 - spread * 4)), 3),
+                'rationale': 'PAPER ONLY · marktbasierte Referenz ohne unabhängiges Vorhersagemodell.',
+                'paper_stake_cents': PAPER_STAKE_CENTS if expected_value >= 0.02 else 0,
+                'status': 'PAPER' if expected_value >= 0.02 and spread <= 0.08 else 'NO_CALL'}))
     if not candidates:
         return {'tip_text': 'NO_CALL · mindestens 3 unabhängige Buchmacher nötig', 'selection': None,
                 'market': None, 'model_probability': None, 'fair_quote': None, 'market_price': None,
-                'edge': None, 'edge_percent': None, 'confidence': 0, 'rationale': 'Keine verifizierte unabhängige Marktgruppe.',
+                'edge': None, 'edge_percent': None, 'expected_value': None, 'best_bookmaker': None,
+                'confidence': 0, 'paper_stake_cents': 0, 'rationale': 'Keine verifizierte unabhängige Marktgruppe.',
                 'status': 'NO_CALL'}
     _, model = max(candidates, key=lambda item: item[0])
-    # Market consensus is not an independent prediction. Prefer hit probability and fail closed.
-    model['status'] = 'CALL' if (model['edge'] >= 0.05 and model['confidence'] >= 0.68 and model['model_probability'] >= 0.35) else 'NO_CALL'
-    if model['model_probability'] < 0.35:
-        model['rationale'] = 'NO_CALL: Gewinnwahrscheinlichkeit unter 35%; Markt-Konsens allein reicht nicht für einen Tipp.'
+    if model['status'] != 'PAPER':
+        model['rationale'] = 'NO_CALL · kein ausreichend stabiler Paper-Edge; unabhängiges Modell fehlt.'
     model['tip_text'] = f"{model['status']} · {model['selection']} · {model['market']} · Fair {model['fair_quote']:.2f} · Markt {model['market_price']:.2f}"
     return model
 
@@ -288,7 +467,7 @@ def router_stats():
         return {'status':'offline','health':'offline','source':'Nine Router','endpoint':endpoint,'usage':'UNAVAILABLE','reason':type(exc).__name__}
     db = Path(os.environ.get('NINEROUTER_USAGE_DB', str(Path.home() / '.9router' / 'db' / 'data.sqlite'))).expanduser()
     try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
+        with closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1)) as con:
             row = con.execute('SELECT COALESCE(SUM(promptTokens),0), COALESCE(SUM(completionTokens),0), COALESCE(SUM(cost),0), COUNT(*) FROM usageHistory WHERE status = ?', ('ok',)).fetchone()
             cached = 0
             for (raw,) in con.execute('SELECT tokens FROM usageHistory WHERE status = ? AND tokens IS NOT NULL', ('ok',)):
@@ -328,7 +507,7 @@ def telemetry():
     db = hermes_home() / 'kanban.db'
     result = {'status': 'UNAVAILABLE', 'source': str(db), 'agents': [], 'tasks': {}, 'projects': {}}
     try:
-        with sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1) as con:
+        with closing(sqlite3.connect(f'file:{db}?mode=ro', uri=True, timeout=1)) as con:
             rows = con.execute('SELECT assignee, status, COUNT(*) FROM tasks GROUP BY assignee, status').fetchall()
             task_counts = con.execute('SELECT status, COUNT(*) FROM tasks GROUP BY status').fetchall()
             project_counts = con.execute("SELECT COALESCE(project_id, 'UNAVAILABLE'), COUNT(*) FROM tasks GROUP BY project_id").fetchall()
@@ -538,6 +717,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/jarvis-config': return self.send_json(jarvis_config())
         if parsed.path == '/api/tokens': return self.send_json(router_stats())
         if parsed.path == '/api/odds/status': return self.send_json(odds_status())
+        if parsed.path == '/api/betting/state': return self.send_json(betting_state())
         if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
         if parsed.path == '/api/hermes/run':
             task_id = parse_qs(parsed.query).get('task_id', [''])[0]
@@ -560,7 +740,10 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/': self.path='/index.html'
         file = ROOT / self.path.lstrip('/')
         if file.is_file() and ROOT in file.parents:
-            body=file.read_bytes(); types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8'}; self.send_response(200); self.send_header('Content-Type',types.get(file.suffix,'application/octet-stream')); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
+            body=file.read_bytes(); types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8'}; self.send_response(200); self.send_header('Content-Type',types.get(file.suffix,'application/octet-stream'))
+            if parsed.path in ('/betting', '/betting.html') and not _dashboard_csrf(self):
+                self.send_header('Set-Cookie', f'dashboard_csrf={secrets.token_urlsafe(24)}; SameSite=Strict; Path=/')
+            self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
     def do_POST(self):
         parsed = urlsplit(self.path)
@@ -576,6 +759,26 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
                 return self.send_json({'error': str(exc)[:200]}, 400)
             return self.send_json(result, 200 if 'response' in result else 503)
+        if parsed.path == '/api/betting/paper-bets':
+            cookie = _dashboard_csrf(self)
+            if not cookie or not hmac.compare_digest(cookie, self.headers.get('X-CSRF-Token', '')):
+                return self.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
+            try:
+                result = save_paper_bet(json.loads(self.read_body()))
+            except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+                return self.send_json({'error': str(exc)[:200]}, 400)
+            return self.send_json(result, 201)
+        if parsed.path.startswith('/api/betting/paper-bets/') and parsed.path.endswith('/settle'):
+            cookie = _dashboard_csrf(self)
+            if not cookie or not hmac.compare_digest(cookie, self.headers.get('X-CSRF-Token', '')):
+                return self.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
+            bet_id = parsed.path.split('/')[-2]
+            try:
+                payload = json.loads(self.read_body())
+                result = settle_paper_bet(bet_id, payload.get('outcome') if isinstance(payload, dict) else None)
+            except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
+                return self.send_json({'error': str(exc)[:200]}, 400)
+            return self.send_json(result, 200)
         if parsed.path == '/api/hermes/run':
             cookie = _dashboard_csrf(self)
             if not cookie or not hmac.compare_digest(cookie, self.headers.get('X-CSRF-Token', '')):

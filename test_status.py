@@ -5,6 +5,7 @@ import os
 import sqlite3
 import tempfile
 import threading
+from contextlib import closing
 from pathlib import Path
 from http.client import HTTPConnection
 from unittest.mock import patch
@@ -128,6 +129,44 @@ class StatusTests(unittest.TestCase):
         fantasy = server.fantasy_data({'season': '2026', 'week': '4'})
         self.assertIn('status', fantasy) if 'status' in fantasy else self.assertEqual(fantasy.get('error'), 'Fantasy Backend nicht erreichbar')
 
+    def test_paper_model_finds_line_shopping_candidate_without_calling_it_profit(self):
+        markets = []
+        for bookmaker, home_price in (('A', 2.00), ('B', 2.05), ('C', 2.10), ('D', 2.20)):
+            markets.append({'bookmaker': bookmaker, 'market': 'h2h', 'outcomes': [
+                {'name': 'Home', 'price': home_price}, {'name': 'Away', 'price': 2.00}
+            ]})
+        result = server.baseline_model({'markets': markets})
+        self.assertEqual(result['status'], 'PAPER')
+        self.assertEqual(result['best_bookmaker'], 'D')
+        self.assertGreater(result['expected_value'], 0)
+        self.assertIn('PAPER ONLY', result['rationale'])
+
+    def test_betting_snapshot_roundtrip_is_persistent(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
+            saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
+            loaded = server.latest_betting_snapshot()
+        self.assertEqual(loaded['id'], saved['id'])
+        self.assertEqual(loaded['events'], [])
+
+    def test_paper_betting_state_and_write_protection(self):
+        status, body = self.request('GET', '/api/betting/state')
+        self.assertEqual(status, 200)
+        self.assertEqual({'feed', 'candidates', 'paper_bets', 'metrics'}, set(json.loads(body)))
+        status, body = self.request('POST', '/api/betting/paper-bets', json.dumps({}), {'Content-Type': 'application/json'})
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body), {'error': 'CSRF-Prüfung fehlgeschlagen'})
+
+    def test_paper_journal_settlement_updates_metrics(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'), patch.dict(os.environ, {'THE_ODDS_API_KEY': 'test-key'}):
+            saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
+            bet = server.save_paper_bet({'snapshot_id': saved['id'], 'event_id': 'event-1', 'market': 'h2h', 'selection': 'Home', 'bookmaker': 'Testbook', 'odds': 2.0, 'model_probability': 0.55, 'expected_value': 0.10})
+            self.assertEqual(server.betting_state()['metrics']['open_bets'], 1)
+            server.settle_paper_bet(bet['id'], 'win')
+            state = server.betting_state()
+        self.assertEqual(state['metrics']['settled_bets'], 1)
+        self.assertEqual(state['metrics']['profit_cents'], 250)
+        self.assertEqual(state['metrics']['roi'], 1.0)
+
     def test_targeted_function_matrix_fixture_and_route_contracts(self):
         rows = server.finance_parse_csv(
             b'Datum;Beschreibung;Betrag\n31.12.2025;Supermarkt;-12,50\n', 'checking')
@@ -140,6 +179,8 @@ class StatusTests(unittest.TestCase):
         betting = (server.ROOT / 'betting.html').read_text()
         self.assertIn('id="sport-filter"', betting)
         self.assertIn('id="competition-filter"', betting)
+        self.assertIn('Paper-Wette', betting)
+        self.assertIn('/api/betting/state', betting)
         tokens = (server.ROOT / 'tokens.html').read_text()
         self.assertIn('/api/tokens', tokens)
         self.assertIn('usage', tokens)
@@ -219,13 +260,14 @@ class StatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db = Path(directory) / '.hermes' / 'kanban.db'
             db.parent.mkdir()
-            with sqlite3.connect(db) as con:
+            with closing(sqlite3.connect(db)) as con:
                 con.execute('CREATE TABLE tasks (assignee TEXT, status TEXT, project_id TEXT)')
                 con.executemany('INSERT INTO tasks VALUES (?, ?, ?)', [
                     ('coder', 'done', 'dashboard'),
                     ('coder', 'running', 'dashboard'),
                     ('reviewer', 'todo', None),
                 ])
+                con.commit()
             with patch.dict(os.environ, {'HERMES_HOME': str(Path(directory) / '.hermes')}, clear=False):
                 payload = server.telemetry()
         self.assertEqual(payload['status'], 'AVAILABLE')
@@ -242,9 +284,10 @@ class StatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             db = Path(directory) / '.hermes' / 'kanban.db'
             db.parent.mkdir()
-            with sqlite3.connect(db) as con:
+            with closing(sqlite3.connect(db)) as con:
                 con.execute('CREATE TABLE tasks (assignee TEXT, status TEXT, project_id TEXT)')
                 con.execute('INSERT INTO tasks VALUES (?, ?, ?)', (None, None, None))
+                con.commit()
             with patch.dict(os.environ, {'HERMES_HOME': str(Path(directory) / '.hermes')}, clear=False):
                 payload = server.telemetry()
         self.assertEqual(payload['agents'], [{'name': 'UNAVAILABLE', 'tasks': {'UNAVAILABLE': 1}}])

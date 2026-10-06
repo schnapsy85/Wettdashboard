@@ -1,21 +1,30 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Betting Lab</title><link rel="stylesheet" href="betting.css"><link rel="stylesheet" href="/command-center.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Betting Lab</title>
+  <link rel="stylesheet" href="betting.css">
+  <link rel="stylesheet" href="/command-center.css">
 </head>
 <body>
-<nav class="site-nav" aria-label="Hauptnavigation"><a class="brand" href="/">Hermes<span>Agent</span></a><div class="nav-links"><a href="/">Dashboard</a><a href="/tokens.html">Tokenüberwachung</a><a class="active" href="/betting">Betting Lab</a><a href="/trading">Trading Testnet</a><a href="/finanzen.html">Finanzen</a><a href="/fantasy">Fantasy</a></div></nav>
-<header class="topbar"><div><p class="eyebrow">READ-ONLY-ANALYSE</p><h1>Betting Lab</h1></div><div class="header-status" aria-live="polite"><span class="status-dot"></span><span id="global-status">Daten werden geprüft</span></div></header>
-<nav aria-label="Filter" class="filters"><label>Sport<select id="sport-filter"><option value="all">Alle Sportarten</option><option>Fußball</option><option>Volleyball</option><option>NFL</option></select></label><label>Wettbewerb<select id="competition-filter"><option value="all">Alle Wettbewerbe</option></select></label><button id="refresh" type="button">Daten erneut prüfen</button></nav>
-<main>
-<section class="notice" aria-label="Sicherheitshinweis"><strong>Analyse, keine Garantie und keine Aufforderung zu wetten.</strong><span>Nur Geld einsetzen, dessen Verlust du verkraftest. Pausen einlegen; Verluste nicht jagen.</span></section>
-<section class="summary" aria-label="Datenstatus" id="summary"></section>
-<div class="layout"><section><div class="section-heading"><h2>Ereignisse</h2><span id="count"></span></div><div id="events" class="events" aria-live="polite"></div></section><aside id="detail" aria-label="Ereignisdetails"><h2>Details</h2><p>Wähle ein Ereignis. Live-Daten werden nicht durch Beispielwerte ersetzt.</p></aside></div>
-<section class="panel data-panel"><div class="section-heading"><h2>Wettmärkte</h2><span class="meta">Read-only · keine Quoten geladen</span></div><div class="table-wrap"><table><caption class="sr-only">Verfügbare Wettmärkte</caption><thead><tr><th>Sport</th><th>Wettbewerb</th><th>Markt</th><th>Status</th><th>Quelle</th></tr></thead><tbody id="markets"><tr><td colspan="5" class="empty">Keine verifizierten Märkte verfügbar.</td></tr></tbody></table></div></section>
-<section class="lab-grid"><form id="bet-form" class="panel"><h2>Lokale Wette erfassen</h2><label>Datum<input id="bet-date" type="date" required></label><label>Sport<input id="bet-sport" maxlength="40" required></label><label>Einsatz (€)<input id="bet-stake" type="number" min="0.01" step="0.01" required></label><label>Ergebnis<select id="bet-result"><option value="open">Offen</option><option value="win">Gewonnen</option><option value="loss">Verloren</option></select></label><button type="submit">Lokal speichern</button><p id="bet-message" class="meta" role="status"></p></form><section class="panel"><h2>Lokale Statistik</h2><div id="bet-stats" class="stats" aria-live="polite"></div><div id="bet-chart" class="chart empty" role="img" aria-label="Lokaleinsatz-Verlauf">Noch keine lokalen Wetten für Verlauf vorhanden.</div></section><section class="panel"><h2>Tages-Empfehlungen</h2><p class="no-call">NO_CALL · NO BET</p><p class="meta">Keine verifizierten Live-Daten oder Modellwerte. Empfehlungen bleiben unterdrückt.</p></section></section>
-<section class="panel data-panel"><div class="section-heading"><h2>Wettjournal</h2><span class="meta">Nur lokal in diesem Browser</span></div><div class="table-wrap"><table><caption class="sr-only">Lokal gespeichertes Wettjournal</caption><thead><tr><th>Datum</th><th>Sport</th><th>Einsatz</th><th>Ergebnis</th></tr></thead><tbody id="journal"><tr><td colspan="4" class="empty">Noch keine lokalen Einträge.</td></tr></tbody></table></div></section>
-<section class="panel api-panel"><h2>The Odds API</h2><p id="odds-status" class="meta">Status wird geprüft …</p></section>
-</main><footer>Modellstatus: nicht geladen · Keine Wettabgabe, keine Konten, keine Einzahlungen.</footer>
-<script src="betting.js"></script>
-</body></html>
+  <nav class="site-nav" aria-label="Hauptnavigation"><a class="brand" href="/">Hermes<span>Agent</span></a><div class="nav-links"><a href="/">Command Center</a><a href="/tokens.html">Token&uuml;berwachung</a><a class="active" href="/betting">Betting Lab</a><a href="/trading">Trading Testnet</a><a href="/finanzen.html">Finanzen</a><a href="/fantasy">Fantasy</a></div></nav>
+  <header class="topbar"><div><p class="eyebrow">PAPER-ONLY-ANALYSE</p><h1>Betting Lab</h1><p class="meta">Marktbasierte Kandidaten. Keine Echtgeldabgabe. Keine Gewinn-Garantie.</p></div><div class="header-status" aria-live="polite"><span class="status-dot"></span><span id="global-status">Snapshot wird gepr&uuml;ft</span></div></header>
+  <nav aria-label="Filter" class="filters"><label>Sport<select id="sport-filter"><option value="all">Alle Sportarten</option><option>Fu&szlig;ball</option><option>Volleyball</option><option>NFL</option></select></label><label>Wettbewerb<select id="competition-filter"><option value="all">Alle Wettbewerbe</option></select></label><button id="refresh" type="button">Snapshot pr&uuml;fen</button></nav>
+  <main data-state-endpoint="/api/betting/state">
+    <section class="notice" aria-label="Sicherheitshinweis"><strong>Paper-only: Kandidaten werden gespeichert, aber nicht platziert.</strong><span>Der aktuelle Filter nutzt Marktvergleich, kein unabh&auml;ngiges Vorhersagemodell. Erst nach Backtest und Kalibrierung Echtgeld erw&auml;gen.</span></section>
+    <section class="summary" aria-label="Datenstatus" id="summary"></section>
+    <div class="layout"><section><div class="section-heading"><h2>Paper-Kandidaten</h2><span id="count"></span></div><div id="events" class="events" aria-live="polite"></div></section><aside id="detail" aria-label="Ereignisdetails"><h2>Details</h2><p>W&auml;hle einen Paper-Kandidaten. Die Rohquoten bleiben sichtbar.</p></aside></div>
+    <section class="panel data-panel"><div class="section-heading"><h2>Wettm&auml;rkte</h2><span id="odds-status" class="meta">Snapshot wird gepr&uuml;ft</span></div><div class="table-wrap"><table><caption class="sr-only">Verf&uuml;gbare Wettm&auml;rkte</caption><thead><tr><th>Sport</th><th>Wettbewerb</th><th>Markt</th><th>Status</th><th>Quelle</th></tr></thead><tbody id="markets"><tr><td colspan="5" class="empty">Snapshot wird gepr&uuml;ft.</td></tr></tbody></table></div></section>
+    <section class="lab-grid">
+      <form id="bet-form" class="panel"><h2>Lokale Historie</h2><p class="meta">Bestehende Browser-Notizen bleiben lokal erhalten.</p><label>Datum<input id="bet-date" type="date" required></label><label>Sport<input id="bet-sport" maxlength="40" required></label><label>Einsatz (&euro;)<input id="bet-stake" type="number" min="0.01" step="0.01" required></label><label>Ergebnis<select id="bet-result"><option value="open">Offen</option><option value="win">Gewonnen</option><option value="loss">Verloren</option></select></label><button type="submit">Lokal speichern</button><p id="bet-message" class="meta" role="status"></p></form>
+      <section class="panel"><h2>Paper-Metriken</h2><div id="paper-metrics" class="stats" aria-live="polite"><div><b>UNAVAILABLE</b><small>Snapshot fehlt</small></div></div><p id="paper-source" class="meta">Quelle: UNAVAILABLE</p></section>
+      <section class="panel"><h2>Lokale Statistik</h2><div id="bet-stats" class="stats" aria-live="polite"></div><div id="bet-chart" class="chart empty" role="img" aria-label="Lokaleinsatz-Verlauf">Noch keine lokalen Wetten f&uuml;r Verlauf vorhanden.</div></section>
+    </section>
+    <section class="panel data-panel"><div class="section-heading"><h2>Paper-Wettjournal</h2><span class="meta">Serverseitig gespeichert &middot; manuell settlement</span></div><div class="table-wrap"><table><caption class="sr-only">Serverseitiges Paper-Wettjournal</caption><thead><tr><th>Markt</th><th>Quote</th><th>EV</th><th>Einsatz</th><th>Ergebnis</th></tr></thead><tbody id="paper-journal"><tr><td colspan="5" class="empty">Noch keine Paper-Wetten gespeichert.</td></tr></tbody></table></div></section>
+    <section class="panel api-panel"><h2>Quelle</h2><p id="source-status" class="meta">The Odds API &middot; Snapshot-Timer wird gepr&uuml;ft.</p></section>
+  </main>
+  <footer>Systemstatus: Paper-only &middot; keine Wettabgabe, keine Konten, keine Einzahlungen.</footer>
+  <script src="betting.js"></script>
+</body>
+</html>
