@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-import csv, hashlib, hmac, io, json, os, secrets, shutil, socket, sqlite3, subprocess, urllib.request
+import csv, hashlib, hmac, io, json, os, secrets, shutil, socket, sqlite3, subprocess, time, urllib.request
 from collections import defaultdict
 from datetime import date, datetime
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit, quote
 import hyperliquid_bot
 
 FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
@@ -363,12 +363,99 @@ def engineering_status():
     return {'overall': 'AVAILABLE' if gateway_ok and router_ok else 'UNAVAILABLE', 'retrieved_at': retrieved_at, 'sources': items}
 
 CONVERSATION_MAX_INPUT = 4000
+HERMES_RUN_TIMEOUT = 10
+HERMES_TASK_OWNERS = {}
+HERMES_TASK_OWNERS_LIMIT = 256
+
+def _dashboard_csrf(handler):
+    return next((part.split('=', 1)[1] for part in handler.headers.get('Cookie', '').split('; ') if part.startswith('dashboard_csrf=')), '')
+
+def _remember_hermes_task(task_id, csrf):
+    if len(HERMES_TASK_OWNERS) >= HERMES_TASK_OWNERS_LIMIT:
+        del HERMES_TASK_OWNERS[next(iter(HERMES_TASK_OWNERS))]
+    HERMES_TASK_OWNERS[task_id] = csrf
+
+def _task_owned(handler, task_id):
+    csrf = _dashboard_csrf(handler)
+    return bool(csrf and HERMES_TASK_OWNERS.get(task_id) == csrf)
+
+def _hermes_executable():
+    configured = os.environ.get('HERMES_EXECUTABLE', '').strip()
+    candidates = [configured, shutil.which('hermes'), str(hermes_home() / 'hermes-agent' / 'hermes')]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return str(Path(candidate).resolve())
+    return None
+
+def _native_task_cli(args):
+    executable = _hermes_executable()
+    if not executable:
+        return None, 'Hermes executable unavailable'
+    env = os.environ.copy()
+    home = hermes_home()
+    # Native CLI expects root HERMES_HOME plus explicit profile routing.
+    if home.parent.name == 'profiles':
+        root, profile = home.parent.parent, home.name
+    else:
+        root = home
+        profile = env.get('HERMES_PROFILE', '').strip() or 'coder'
+    env['HERMES_HOME'] = str(root)
+    env['HERMES_PROFILE'] = profile
+    try:
+        completed = subprocess.run([executable, 'kanban', *args, '--json'], env=env,
+                                   capture_output=True, text=True, timeout=HERMES_RUN_TIMEOUT,
+                                   check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, type(exc).__name__
+    if completed.returncode:
+        detail = (completed.stderr or completed.stdout).strip().splitlines()
+        suffix = f': {detail[-1][:200]}' if detail else ''
+        return None, f'Hermes CLI failed ({completed.returncode}){suffix}'
+    try:
+        return json.loads(completed.stdout), None
+    except json.JSONDecodeError:
+        return None, 'Hermes CLI response invalid'
+
+def _task_payload(task_id, current):
+    task = current.get('task', current) if isinstance(current, dict) else {}
+    runs = current.get('runs', []) if isinstance(current, dict) else []
+    run = next((item for item in runs if isinstance(item, dict) and item.get('status') in ('running', 'done', 'failed', 'blocked')), None)
+    if run is None:
+        run = next((item for item in runs if isinstance(item, dict)), None)
+    metadata = run.get('metadata') if isinstance(run, dict) else None
+    metadata = metadata if isinstance(metadata, dict) else {}
+    return {'status': task.get('status', 'unknown'), 'task_id': task_id,
+            'run_id': task.get('current_run_id') or (run or {}).get('id'),
+            'session_id': metadata.get('worker_session_id'), 'result': task.get('result'),
+            'latest_summary': current.get('latest_summary', task.get('latest_summary'))}
+
 def hermes_run(message):
-    """Fail closed until verified native Hermes task-start API is available."""
+    """Create one native Hermes task, then return its real state."""
     if not isinstance(message, str) or not message.strip() or len(message) > CONVERSATION_MAX_INPUT:
         raise ValueError('Ungültige Auftragseingabe')
-    return {'status': 'unavailable', 'error': 'Native Hermes run unavailable',
-            'reason': 'Verified native task-start contract missing; no run or session created'}
+    key = hashlib.sha256(message.encode()).hexdigest()
+    created, error = _native_task_cli(['create', 'Dashboard order', '--body', message,
+        '--assignee', 'coder', '--workspace', 'scratch', '--idempotency-key', f'dashboard-order:{key}'])
+    if not created:
+        return {'status': 'unavailable', 'error': 'Native Hermes task creation failed', 'reason': error}
+    task_id = created.get('id') if isinstance(created, dict) else None
+    if not task_id:
+        return {'status': 'unavailable', 'error': 'Native Hermes response invalid', 'reason': 'task ID missing'}
+    _native_task_cli(['dispatch'])
+    deadline = time.monotonic() + HERMES_RUN_TIMEOUT
+    current = None
+    error = None
+    while time.monotonic() < deadline:
+        current, error = _native_task_cli(['show', str(task_id)])
+        if not current:
+            break
+        status = current.get('task', current).get('status') if isinstance(current, dict) else None
+        if status in ('done', 'completed', 'failed', 'blocked'):
+            break
+        time.sleep(0.2)
+    if not current:
+        return {'status': 'unavailable', 'error': 'Native Hermes task lookup failed', 'reason': error, 'task_id': task_id}
+    return _task_payload(task_id, current)
 
 def conversation(message):
     """Route text through local authenticated NineRouter without exposing credentials."""
@@ -433,6 +520,14 @@ def systems():
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlsplit(self.path)
+        if parsed.path == '/':
+            token = secrets.token_urlsafe(24)
+            body = (ROOT / 'index.html').read_bytes()
+            self.send_response(200)
+            self.send_header('Set-Cookie', f'dashboard_csrf={token}; SameSite=Strict; Path=/')
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers(); self.wfile.write(body); return
         if parsed.path == '/finanzen.html': self.path = '/finanzen.html'
         if parsed.path.startswith('/api/finance/'):
             return self.finance_get(parsed.path)
@@ -444,6 +539,16 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/api/tokens': return self.send_json(router_stats())
         if parsed.path == '/api/odds/status': return self.send_json(odds_status())
         if parsed.path == '/api/trading/status': return self.send_json({'config': hyperliquid_bot.config(), 'strategy': hyperliquid_bot.strategy_contract(), 'market': hyperliquid_bot.snapshot()})
+        if parsed.path == '/api/hermes/run':
+            task_id = parse_qs(parsed.query).get('task_id', [''])[0]
+            if not task_id or len(task_id) > 80:
+                return self.send_json({'error': 'task_id fehlt'}, 400)
+            if not _task_owned(self, task_id):
+                return self.send_json({'error': 'Task-Zugriff verweigert'}, 403)
+            current, error = _native_task_cli(['show', task_id])
+            if not current:
+                return self.send_json({'error': 'Native Hermes task lookup failed', 'reason': error}, 503)
+            return self.send_json(_task_payload(task_id, current))
 
         if parsed.path == '/api/fantasy':
             q = parse_qs(parsed.query)
@@ -472,11 +577,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({'error': str(exc)[:200]}, 400)
             return self.send_json(result, 200 if 'response' in result else 503)
         if parsed.path == '/api/hermes/run':
+            cookie = _dashboard_csrf(self)
+            if not cookie or not hmac.compare_digest(cookie, self.headers.get('X-CSRF-Token', '')):
+                return self.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
             try:
                 payload = json.loads(self.read_body()); run = hermes_run(payload.get('message') if isinstance(payload, dict) else None)
             except (ValueError, TypeError, UnicodeError, json.JSONDecodeError) as exc:
                 return self.send_json({'error': str(exc)[:200]}, 400)
-            return self.send_json(run, 200 if run['status'] == 'completed' else 503)
+            if run.get('task_id'):
+                _remember_hermes_task(run['task_id'], cookie)
+            return self.send_json(run, 200 if run.get('status') in ('todo', 'ready', 'running', 'done', 'completed', 'failed', 'blocked') else 503)
         self.send_error(404)
     def read_body(self):
         length = int(self.headers.get('Content-Length', '0'))

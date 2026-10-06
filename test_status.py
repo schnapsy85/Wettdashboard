@@ -63,12 +63,86 @@ class StatusTests(unittest.TestCase):
             self.assertNotIn('response', payload)
         self.assertNotIn('fake', json.dumps(payload).lower())
 
-    def test_hermes_run_fails_closed_without_fabricated_ids(self):
-        payload = server.hermes_run('hello')
+    def test_hermes_run_uses_native_cli_and_real_status(self):
+        responses = [
+            ({'id': 'task-real'}, None),
+            ({'status': 'ok'}, None),
+            ({'id': 'task-real', 'status': 'done', 'current_run_id': 42,
+              'result': 'completed', 'latest_summary': 'worker finished'}, None),
+            ({'id': 'task-real', 'status': 'done', 'current_run_id': 42,
+              'result': 'completed', 'latest_summary': 'worker finished'}, None),
+        ]
+        def native(args):
+            if args == ['dispatch']:
+                return {'status': 'ok'}, None
+            return responses.pop(0)
+        with patch.dict(os.environ, {'HERMES_HOME': '/tmp/hermes-test'}), \
+             patch.object(server, '_native_task_cli', side_effect=native) as cli:
+            payload = server.hermes_run('hello')
+        self.assertEqual(payload, {'status': 'done', 'task_id': 'task-real', 'run_id': 42,
+                                   'session_id': None, 'result': 'completed', 'latest_summary': 'worker finished'})
+        self.assertEqual(cli.call_args_list[0].args[0][:2], ['create', 'Dashboard order'])
+        self.assertIn('--idempotency-key', cli.call_args_list[0].args[0])
+        self.assertEqual(cli.call_args_list[2].args[0], ['show', 'task-real'])
+
+    def test_hermes_run_fails_closed_without_executable(self):
+        with patch.object(server, '_hermes_executable', return_value=None):
+            payload = server.hermes_run('hello')
         self.assertEqual(payload['status'], 'unavailable')
-        self.assertNotIn('id', payload)
-        self.assertNotIn('session_id', payload)
-        self.assertIn('Verified native task-start contract missing', payload['reason'])
+        self.assertIn('executable unavailable', payload['reason'])
+
+    def test_native_cli_explicitly_routes_profile_and_root_home(self):
+        completed = type('Completed', (), {'returncode': 0, 'stdout': '{"status":"ok"}', 'stderr': ''})()
+        with patch.object(server, '_hermes_executable', return_value='/verified/hermes'), \
+             patch.object(server.subprocess, 'run', return_value=completed) as run:
+            payload, error = server._native_task_cli(['show', 'task'])
+        self.assertEqual((payload, error), ({'status': 'ok'}, None))
+        env = run.call_args.kwargs['env']
+        self.assertEqual(env['HERMES_HOME'], str(server.hermes_home()))
+        self.assertEqual(env['HERMES_PROFILE'], os.environ.get('HERMES_PROFILE', 'coder'))
+
+    def test_hermes_poll_requires_dashboard_task_owner(self):
+        with patch.object(server, '_native_task_cli', return_value=({'status': 'done'}, None)):
+            status, body = self.request('GET', '/api/hermes/run?task_id=arbitrary')
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body), {'error': 'Task-Zugriff verweigert'})
+
+    def test_native_task_ui_has_one_bound_form_and_no_stale_blocker(self):
+        html = (server.ROOT / 'index.html').read_text()
+        self.assertEqual(html.count('id="hermes-run-form"'), 1)
+        self.assertEqual(html.count('id="hermes-run-input"'), 1)
+        self.assertEqual(html.count('id="hermes-run-status"'), 1)
+        self.assertIn('AVAILABLE · verified native Hermes CLI', html)
+        self.assertNotIn('verified task-start contract missing', html)
+
+    def test_targeted_function_matrix_safe_contracts(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('THE_ODDS_API_KEY', None)
+            odds = server.odds_feed()
+        self.assertEqual(odds['status'], 'unavailable')
+        self.assertEqual(odds['events'], [])
+        self.assertEqual(server.hyperliquid_bot.config()['environment'], 'testnet')
+        self.assertIn('signals', server.hyperliquid_bot.strategy_contract())
+        tokens = server.router_stats()
+        self.assertIn(tokens.get('usage'), {'AVAILABLE', 'UNAVAILABLE'})
+        fantasy = server.fantasy_data({'season': '2026', 'week': '4'})
+        self.assertIn('status', fantasy) if 'status' in fantasy else self.assertEqual(fantasy.get('error'), 'Fantasy Backend nicht erreichbar')
+
+    def test_targeted_function_matrix_fixture_and_route_contracts(self):
+        rows = server.finance_parse_csv(
+            b'Datum;Beschreibung;Betrag\n31.12.2025;Supermarkt;-12,50\n', 'checking')
+        self.assertEqual(rows[0]['amount_cents'], -1250)
+        self.assertEqual(rows[0]['kind'], 'expense')
+        self.assertEqual(server.hyperliquid_bot.config()['environment'], 'testnet')
+        html = (server.ROOT / 'index.html').read_text()
+        for href in ('/fantasy', '/finanzen.html', '/trading', '/betting', '/tokens.html'):
+            self.assertIn(f'href="{href}"', html)
+        betting = (server.ROOT / 'betting.html').read_text()
+        self.assertIn('id="sport-filter"', betting)
+        self.assertIn('id="competition-filter"', betting)
+        tokens = (server.ROOT / 'tokens.html').read_text()
+        self.assertIn('/api/tokens', tokens)
+        self.assertIn('usage', tokens)
 
     def test_conversation_rejects_invalid_and_oversize_input(self):
         for body in (b'{', json.dumps({'message': 'x' * (server.CONVERSATION_MAX_INPUT + 1)}).encode()):
