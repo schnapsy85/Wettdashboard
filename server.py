@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import csv, hashlib, hmac, io, json, os, secrets, shutil, socket, sqlite3, subprocess, time, urllib.request
+import csv, hashlib, hmac, io, json, math, os, secrets, shutil, socket, sqlite3, subprocess, time, urllib.request
 from collections import defaultdict
 from contextlib import closing
 from datetime import date, datetime
@@ -199,6 +199,7 @@ BETTING_DB = Path(os.environ.get('BETTING_DB', str(Path.home() / '.local' / 'sta
 BETTING_SNAPSHOT_MAX_AGE = 1800
 PAPER_BANKROLL_CENTS = 50000
 PAPER_STAKE_CENTS = 250
+MIN_FORECAST_SAMPLE = 20
 ODDS_CACHE = {'at': 0.0, 'data': None} 
 ODDS_CACHE_TTL = 120.0
 
@@ -231,6 +232,50 @@ def _betting_connect():
         settled_at TEXT,
         UNIQUE(snapshot_id, event_id, market, selection, bookmaker)
     );
+    CREATE TABLE IF NOT EXISTS feature_snapshots (
+        id INTEGER PRIMARY KEY,
+        snapshot_id INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        retrieved_at TEXT NOT NULL,
+        status TEXT NOT NULL,
+        completeness REAL NOT NULL,
+        payload TEXT NOT NULL,
+        source_hashes TEXT NOT NULL,
+        UNIQUE(snapshot_id, event_id, sport)
+    );
+    CREATE TABLE IF NOT EXISTS model_runs (
+        id INTEGER PRIMARY KEY,
+        snapshot_id INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        UNIQUE(snapshot_id, event_id, sport, model_version)
+    );
+    CREATE TABLE IF NOT EXISTS forecasts (
+        id INTEGER PRIMARY KEY,
+        snapshot_id INTEGER NOT NULL,
+        event_id TEXT NOT NULL,
+        sport TEXT NOT NULL,
+        market TEXT NOT NULL,
+        selection TEXT NOT NULL,
+        model_version TEXT NOT NULL,
+        validation_status TEXT NOT NULL,
+        probability REAL,
+        fair_quote REAL,
+        market_price REAL,
+        uncertainty REAL,
+        expected_value REAL,
+        status TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        UNIQUE(snapshot_id, event_id, market, selection, model_version)
+    );
+    CREATE INDEX IF NOT EXISTS forecasts_event_idx ON forecasts(event_id, created_at);
     ''')
     return con
 
@@ -261,6 +306,125 @@ def latest_betting_snapshot():
         return None
     payload.update(id=row[0], snapshot_id=row[0], snapshot_at=row[1], snapshot_source=row[2], snapshot_event_count=row[3])
     return payload
+
+def save_feature_snapshot(snapshot_id, event_id, sport, snapshot):
+    if not isinstance(snapshot, dict):
+        raise ValueError('Feature-Snapshot ungültig')
+    retrieved_at = str(snapshot.get('retrieved_at') or datetime.now().astimezone().isoformat(timespec='seconds'))
+    source_hashes = [item.get('payload_hash') for item in snapshot.get('sources', []) if item.get('payload_hash')]
+    payload = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))
+    with closing(_betting_connect()) as con:
+        con.execute('''INSERT OR IGNORE INTO feature_snapshots
+            (snapshot_id, event_id, sport, retrieved_at, status, completeness, payload, source_hashes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (int(snapshot_id), str(event_id)[:160], str(sport)[:40], retrieved_at,
+                     str(snapshot.get('status') or 'unavailable'), float(snapshot.get('completeness') or 0),
+                     payload, json.dumps(source_hashes, separators=(',', ':'))))
+        row = con.execute('SELECT id FROM feature_snapshots WHERE snapshot_id = ? AND event_id = ? AND sport = ?',
+                          (int(snapshot_id), str(event_id)[:160], str(sport)[:40])).fetchone()
+        con.commit()
+    return {'id': row[0], 'snapshot_id': int(snapshot_id), 'event_id': str(event_id), 'sport': str(sport)}
+
+def save_model_run(snapshot_id, event_id, sport, model):
+    if not isinstance(model, dict) or not model.get('model_version'):
+        raise ValueError('Model-Lauf ungültig')
+    model_version = str(model['model_version'])[:80]
+    created_at = datetime.now().astimezone().isoformat(timespec='seconds')
+    payload = json.dumps(model, ensure_ascii=False, separators=(',', ':'))
+    with closing(_betting_connect()) as con:
+        con.execute('''INSERT OR IGNORE INTO model_runs
+            (snapshot_id, event_id, sport, model_version, validation_status, created_at, payload)
+            VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    (int(snapshot_id), str(event_id)[:160], str(sport)[:40], model_version,
+                     str(model.get('validation_status') or 'unvalidated')[:40], created_at, payload))
+        row = con.execute('''SELECT id, model_version, validation_status FROM model_runs
+                             WHERE snapshot_id = ? AND event_id = ? AND sport = ? AND model_version = ?''',
+                          (int(snapshot_id), str(event_id)[:160], str(sport)[:40], model_version)).fetchone()
+        con.commit()
+    return {'id': row[0], 'model_version': row[1], 'validation_status': row[2]}
+
+def save_forecast(snapshot_id, event_id, sport, market, selection, forecast):
+    if not isinstance(forecast, dict) or not forecast.get('model_version'):
+        raise ValueError('Forecast ungültig')
+    model_version = str(forecast['model_version'])[:80]
+    created_at = datetime.now().astimezone().isoformat(timespec='seconds')
+    payload = json.dumps(forecast, ensure_ascii=False, separators=(',', ':'))
+    values = (int(snapshot_id), str(event_id)[:160], str(sport)[:40], str(market)[:40], str(selection)[:160], model_version,
+              str(forecast.get('validation_status') or 'unvalidated')[:40], forecast.get('model_probability'), forecast.get('fair_quote'),
+              forecast.get('market_price'), forecast.get('uncertainty'), forecast.get('expected_value'),
+              str(forecast.get('status') or 'NO_CALL')[:24], str(forecast.get('reason') or '')[:240], created_at, payload)
+    with closing(_betting_connect()) as con:
+        con.execute('''INSERT OR IGNORE INTO forecasts
+            (snapshot_id, event_id, sport, market, selection, model_version, validation_status,
+             probability, fair_quote, market_price, uncertainty, expected_value, status, reason, created_at, payload)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', values)
+        row = con.execute('''SELECT id FROM forecasts WHERE snapshot_id = ? AND event_id = ? AND market = ?
+                             AND selection = ? AND model_version = ?''',
+                          (values[0], values[1], values[3], values[4], values[5])).fetchone()
+        con.commit()
+    return {'id': row[0], 'snapshot_id': int(snapshot_id), 'event_id': str(event_id), 'market': str(market), 'selection': str(selection), 'model_version': model_version}
+
+def latest_forecasts(snapshot_id=None):
+    if not BETTING_DB.is_file():
+        return []
+    query = '''SELECT id, snapshot_id, event_id, sport, market, selection, model_version,
+                      validation_status, probability, fair_quote, market_price, uncertainty,
+                      expected_value, status, reason, created_at, payload
+               FROM forecasts'''
+    args = ()
+    if snapshot_id is not None:
+        query += ' WHERE snapshot_id = ?'
+        args = (int(snapshot_id),)
+    query += ' ORDER BY id DESC LIMIT 500'
+    try:
+        with closing(sqlite3.connect(f'file:{BETTING_DB}?mode=ro', uri=True)) as con:
+            rows = con.execute(query, args).fetchall()
+    except sqlite3.Error:
+        return []
+    result = []
+    for row in rows:
+        try:
+            payload = json.loads(row[16])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            payload = {}
+        payload.update({
+            'id': row[0], 'snapshot_id': row[1], 'event_id': row[2], 'sport': row[3],
+            'market': row[4], 'selection': row[5], 'model_version': row[6],
+            'validation_status': row[7], 'model_probability': row[8], 'fair_quote': row[9],
+            'market_price': row[10], 'uncertainty': row[11], 'expected_value': row[12],
+            'status': row[13], 'reason': row[14], 'created_at': row[15],
+        })
+        result.append(payload)
+    return result
+
+def forecast_metrics():
+    bets = [bet for bet in _paper_bet_rows() if bet['outcome'] in ('win', 'loss')]
+    if len(bets) < MIN_FORECAST_SAMPLE:
+        return {
+            'status': 'UNAVAILABLE', 'sample_size': len(bets),
+            'reason': f'Mindestens {MIN_FORECAST_SAMPLE} abgeschlossene Paper-Wetten erforderlich',
+            'brier_score': None, 'log_loss': None, 'roi': None,
+            'calibration': 'UNAVAILABLE', 'closing_line_value': 'UNAVAILABLE',
+        }
+    brier = 0.0
+    log_loss = 0.0
+    profit = 0
+    stake_total = 0
+    for bet in bets:
+        probability = min(1 - 1e-9, max(1e-9, float(bet['model_probability'])))
+        target = 1 if bet['outcome'] == 'win' else 0
+        brier += (probability - target) ** 2
+        log_loss -= target * math.log(probability) + (1 - target) * math.log(1 - probability)
+        stake = int(bet['stake_cents'])
+        stake_total += stake
+        profit += round(stake * (float(bet['odds']) - 1)) if target else -stake
+    return {
+        'status': 'AVAILABLE', 'sample_size': len(bets),
+        'reason': None, 'brier_score': round(brier / len(bets), 6),
+        'log_loss': round(log_loss / len(bets), 6),
+        'roi': round(profit / stake_total, 6) if stake_total else None,
+        'calibration': 'UNAVAILABLE', 'closing_line_value': 'UNAVAILABLE',
+    }
 
 def _snapshot_age(retrieved_at):
     try:

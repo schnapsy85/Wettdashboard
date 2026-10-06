@@ -239,6 +239,35 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(outsider['status'], 'NO_CALL')
         self.assertIn('wahrscheinlichkeit', outsider['reason'].lower())
 
+    def test_forecast_persistence_contract(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
+            snapshot = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
+            feature = server.save_feature_snapshot(
+                snapshot['id'], 'evt-1', 'football',
+                {'status': 'available', 'completeness': 1.0, 'observations': [{'kind': 'match_result'}], 'sources': [{'name': 'OpenLigaDB', 'payload_hash': 'abc'}]},
+            )
+            self.assertGreater(feature['id'], 0)
+            model = server.save_model_run(
+                snapshot['id'], 'evt-1', 'football',
+                {'model_version': 'football-poisson-v1', 'validation_status': 'unvalidated', 'rationale': 'fixture'},
+            )
+            self.assertEqual(model['model_version'], 'football-poisson-v1')
+            forecast_payload = {
+                'status': 'NO_CALL', 'validation_status': 'unvalidated', 'model_version': 'football-poisson-v1',
+                'model_probability': 0.40, 'fair_quote': 2.5, 'market_price': 2.7,
+                'uncertainty': 0.15, 'expected_value': 0.08, 'reason': 'not validated',
+                'source_names': ['OpenLigaDB'],
+            }
+            first = server.save_forecast(snapshot['id'], 'evt-1', 'football', 'h2h', 'Home FC', forecast_payload)
+            second = server.save_forecast(snapshot['id'], 'evt-1', 'football', 'h2h', 'Home FC', forecast_payload)
+            self.assertEqual(first['id'], second['id'])
+            rows = server.latest_forecasts(snapshot['id'])
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]['source_names'], ['OpenLigaDB'])
+            metrics = server.forecast_metrics()
+            self.assertEqual(metrics['status'], 'UNAVAILABLE')
+            self.assertEqual(metrics['sample_size'], 0)
+
     def test_betting_snapshot_roundtrip_is_persistent(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
             saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
