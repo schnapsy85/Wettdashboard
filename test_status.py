@@ -112,7 +112,7 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(html.count('id="hermes-run-form"'), 1)
         self.assertEqual(html.count('id="hermes-run-input"'), 1)
         self.assertEqual(html.count('id="hermes-run-status"'), 1)
-        self.assertIn('AVAILABLE · verified native Hermes CLI', html)
+        self.assertIn('NATIVE CLI &middot; FAIL CLOSED', html)
         self.assertNotIn('verified task-start contract missing', html)
 
     def test_targeted_function_matrix_safe_contracts(self):
@@ -157,22 +157,36 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)['theme']['cyan'], '#09d6ff')
 
-    def test_jarvis_shell_config_runtime_contract(self):
+    def test_compact_command_center_runtime_contract(self):
         html = (server.ROOT / 'index.html').read_text()
-        self.assertIn('data-widget="mission-control"', html)
-        self.assertIn('data-widget="voice-link"', html)
-        self.assertIn('data-widget="data-policy"', html)
-        self.assertIn('new Set(order).forEach', html)
-        self.assertIn('grid.replaceChildren(fragment)', html)
-        self.assertIn('@media(max-width:640px)', html)
-        self.assertIn("fetch('/api/jarvis-config')", html)
+        for marker in (
+            'id="hermes-run-form"',
+            'id="engineering-status"',
+            'id="telemetry"',
+            'id="agents-summary"',
+            'id="token-status"',
+            'id="system-status"',
+            'id="service-status"',
+            'align-items:start',
+            '@media(max-width:640px)',
+        ):
+            self.assertIn(marker, html)
+        for obsolete in (
+            'JUST A RATHER VERY INTELLIGENT SYSTEM',
+            'class="jarvis-shell"',
+            'id="conversation-form"',
+            'Antwort vorlesen',
+            'Gesamtleistung',
+            'Verbundene Bereiche',
+            'class="svc',
+            "fetch('/api/jarvis-config')",
+        ):
+            self.assertNotIn(obsolete, html)
 
     def test_foundation_regions_have_accessible_states(self):
         html = (server.ROOT / 'index.html').read_text()
-        for marker in ('Engineering System Status', 'Mission Telemetry', 'JARVIS', 'role="status"', 'UNAVAILABLE'):
+        for marker in ('Engineering System Status', 'Mission Telemetry', 'role="status"', 'UNAVAILABLE'):
             self.assertIn(marker, html)
-        self.assertIn('for="dashboard-search"', html)
-        self.assertIn('id="dashboard-search"', html)
 
     def test_jarvis_config_custom_order_is_preserved(self):
         config = server.ROOT / 'jarvis.config.json'
