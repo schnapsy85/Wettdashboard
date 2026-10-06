@@ -141,6 +141,54 @@ class StatusTests(unittest.TestCase):
         self.assertGreater(result['expected_value'], 0)
         self.assertIn('PAPER ONLY', result['rationale'])
 
+    def test_independent_source_contract(self):
+        import betting_sources
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)
+        event = {
+            'id': 'evt-1', 'competition': 'Bundesliga', 'home': 'Home FC',
+            'away': 'Away FC', 'start': '2026-10-10T15:30:00Z',
+        }
+        match = [{
+            'MatchID': 7, 'MatchDateTime': '2026-10-01T15:30:00',
+            'Team1': {'TeamName': 'Home FC'}, 'Team2': {'TeamName': 'Away FC'},
+            'MatchResults': [{'PointsTeam1': 2, 'PointsTeam2': 1}],
+        }]
+
+        def good_fetch(url, timeout, max_bytes):
+            self.assertIn('openligadb', url)
+            self.assertEqual(timeout, 10)
+            self.assertGreater(max_bytes, 1000)
+            return match
+
+        result = betting_sources.source_snapshot(event, 'football', now, fetch_json=good_fetch)
+        self.assertEqual(result['status'], 'available')
+        self.assertEqual(result['completeness'], 1.0)
+        self.assertEqual(result['observations'][0]['kind'], 'match_result')
+        self.assertEqual(result['observations'][0]['home_score'], 2)
+        self.assertEqual(result['sources'][0]['name'], 'OpenLigaDB')
+        self.assertTrue(result['sources'][0]['payload_hash'])
+        self.assertIn('retrieved_at', result)
+
+        malformed = betting_sources.source_snapshot(event, 'football', now, fetch_json=lambda *_args: {})
+        self.assertEqual(malformed['status'], 'unavailable')
+        self.assertIn('malformed', ' '.join(malformed['errors']).lower())
+
+        stale = betting_sources.source_snapshot(
+            event, 'football', now,
+            fetch_json=lambda *_args: [{**match[0], 'MatchDateTime': '2020-01-01T00:00:00'}],
+        )
+        self.assertEqual(stale['status'], 'unavailable')
+        self.assertIn('stale', ' '.join(stale['errors']).lower())
+
+        failed = betting_sources.source_snapshot(
+            event, 'football', now,
+            fetch_json=lambda *_args: (_ for _ in ()).throw(TimeoutError('timeout')),
+        )
+        self.assertEqual(failed['status'], 'unavailable')
+        self.assertIn('TimeoutError', ' '.join(failed['errors']))
+
     def test_betting_snapshot_roundtrip_is_persistent(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
             saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
