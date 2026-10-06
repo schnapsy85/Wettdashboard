@@ -244,7 +244,7 @@
 
   Use one focused commit per verified fix. Do not stage untracked user files, SQLite runtime data, backups, or secrets.
 
-- [ ] **Step 5: Push the branch and report evidence**
+- [x] **Step 5: Push the branch and report evidence**
 
   Push `hermes-stabilize-dashboard-renewal`, report commit IDs, live URL, source status, screenshots, paper metrics, and remaining external blockers. Do not enable Echtgeld.
 
