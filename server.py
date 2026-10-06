@@ -5,6 +5,8 @@ from contextlib import closing
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlencode, urlsplit, quote
 import hyperliquid_bot
+import betting_forecast
+import betting_sources
 
 FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
 
@@ -469,7 +471,87 @@ def refresh_betting_snapshot():
     if feed.get('status') != 'available':
         return feed
     saved = save_betting_snapshot(feed)
-    return {**feed, 'snapshot_id': saved['id'], 'snapshot_at': saved['retrieved_at'], 'snapshot_event_count': saved['event_count'], 'freshness': 'fresh', 'snapshot_age_seconds': 0}
+    events = []
+    source_statuses = []
+    forecast_errors = []
+    candidate_count = 0
+    for original in feed.get('events', []):
+        event = dict(original)
+        sport = 'nfl' if event.get('competition') == 'NFL' else 'football'
+        try:
+            features = betting_sources.source_snapshot(event, sport, datetime.now().astimezone())
+            source_statuses.append(features.get('status'))
+            forecast_errors.extend(str(error) for error in features.get('errors', []))
+            save_feature_snapshot(saved['id'], event.get('id'), sport, features)
+            model = betting_forecast.forecast_nfl(event, features) if sport == 'nfl' else betting_forecast.forecast_football(event, features)
+            model = {**model, 'sport': sport}
+            save_model_run(saved['id'], event.get('id'), sport, model)
+            forecasts = []
+            for market in event.get('markets', []):
+                if market.get('market') != 'h2h':
+                    continue
+                offers = {}
+                for outcome in market.get('outcomes', []):
+                    name = outcome.get('name')
+                    try:
+                        price = float(outcome.get('price'))
+                    except (TypeError, ValueError):
+                        continue
+                    if name and price > 1 and (name not in offers or price > offers[name][0]):
+                        offers[name] = (price, market.get('bookmaker') or 'UNAVAILABLE')
+                for selection, (price, bookmaker) in offers.items():
+                    probability = (model.get('probabilities') or {}).get(selection)
+                    if probability is None:
+                        continue
+                    candidate = {
+                        **model, 'market': 'h2h', 'selection': selection,
+                        'model_probability': probability,
+                        'fair_quote': (model.get('fair_quotes') or {}).get(selection),
+                    }
+                    gated = betting_forecast.gate_forecast(candidate, price)
+                    gated.update(bookmaker=bookmaker, best_bookmaker=bookmaker)
+                    save_forecast(saved['id'], event.get('id'), sport, 'h2h', selection, gated)
+                    forecasts.append(gated)
+            paper = [item for item in forecasts if item.get('status') == 'PAPER']
+            best = max(paper or forecasts, key=lambda item: float(item.get('expected_value') or -999), default=None)
+            event['forecasts'] = forecasts
+            if best:
+                event.update(best)
+                event['tip_text'] = (f"PAPER · {best['selection']} · eigene Chance {best['model_probability']:.1%} · "
+                                     f"Modellquote {best['fair_quote']:.2f} · Markt {best['market_price']:.2f}") if best.get('status') == 'PAPER' else f"NO_CALL · {best.get('reason', 'keine Prognose')}"
+                if best.get('status') == 'PAPER':
+                    candidate_count += 1
+            else:
+                event.update({'status': 'NO_CALL', 'reason': 'Keine modellierte h2h-Auswahl', 'rationale': 'NO_CALL · keine unabhängige Auswahl verfügbar'})
+        except Exception as exc:
+            source_statuses.append('unavailable')
+            forecast_errors.append(f"{event.get('id', 'UNAVAILABLE')}: {type(exc).__name__}")
+            event.update({'status': 'NO_CALL', 'reason': f'Forecast fehlgeschlagen: {type(exc).__name__}', 'rationale': 'NO_CALL · Forecast fehlgeschlagen'})
+        events.append(event)
+    status = 'available' if source_statuses and all(item == 'available' for item in source_statuses) else 'partial' if 'available' in source_statuses else 'unavailable'
+    return {**feed, 'events': events, 'snapshot_id': saved['id'], 'snapshot_at': saved['retrieved_at'],
+            'snapshot_event_count': saved['event_count'], 'freshness': 'fresh', 'snapshot_age_seconds': 0,
+            'forecast_status': status, 'forecast_candidates': candidate_count, 'forecast_errors': forecast_errors}
+
+def _with_forecast_state(feed):
+    if not isinstance(feed, dict):
+        return feed
+    rows = latest_forecasts(feed.get('snapshot_id'))
+    by_event = defaultdict(list)
+    for row in rows:
+        by_event[row['event_id']].append(row)
+    for event in feed.get('events', []):
+        forecasts = by_event.get(event.get('id'), [])
+        paper = [item for item in forecasts if item.get('status') == 'PAPER']
+        best = max(paper or forecasts, key=lambda item: float(item.get('expected_value') or -999), default=None)
+        event['forecasts'] = forecasts
+        if best:
+            event.update(best)
+            if best.get('status') != 'PAPER':
+                event['tip_text'] = f"NO_CALL · {best.get('reason', 'keine unabhängige Prognose')}"
+        else:
+            event.update({'status': 'NO_CALL', 'reason': 'Keine unabhängige Prognose gespeichert', 'rationale': 'NO_CALL · keine unabhängige Prognose gespeichert'})
+    return feed
 
 def odds_feed():
     if not os.environ.get('THE_ODDS_API_KEY', '').strip():
@@ -490,7 +572,7 @@ def _paper_bet_rows():
         return []
 
 def betting_state():
-    feed = odds_feed()
+    feed = _with_forecast_state(odds_feed())
     bets = _paper_bet_rows()
     settled = [bet for bet in bets if bet['outcome'] in ('win', 'loss', 'void')]
     profit_cents = 0
@@ -565,7 +647,6 @@ def normalize_event(event, league):
     result = {'id':event.get('id','UNAVAILABLE'), 'sport':event.get('sport_key','UNAVAILABLE'), 'competition':league,
             'home':event.get('home_team','UNAVAILABLE'), 'away':event.get('away_team','UNAVAILABLE'),
             'start':event.get('commence_time','UNAVAILABLE'), 'markets':markets}
-    result.update(baseline_model(result))
     return result
 
 def baseline_model(event):

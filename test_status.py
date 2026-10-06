@@ -268,6 +268,58 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(metrics['status'], 'UNAVAILABLE')
             self.assertEqual(metrics['sample_size'], 0)
 
+    def test_forecast_refresh_contract(self):
+        import betting_forecast
+        import betting_sources
+
+        features = {
+            'status': 'available', 'completeness': 1.0,
+            'observations': [{'kind': 'match_result'}],
+            'sources': [{'name': 'OpenLigaDB', 'payload_hash': 'abc'}],
+            'retrieved_at': '2026-10-06T12:00:00+00:00', 'errors': [],
+        }
+        event = {
+            'id': 'evt-1', 'sport': 'soccer', 'competition': 'Bundesliga',
+            'home': 'Home FC', 'away': 'Away FC', 'start': '2026-10-10T15:30:00Z',
+            'markets': [{'bookmaker': 'Book', 'market': 'h2h', 'outcomes': [
+                {'name': 'Home FC', 'price': 2.0}, {'name': 'Away FC', 'price': 2.5},
+            ]}],
+        }
+        feed = {'status': 'available', 'source': 'test', 'retrieved_at': '2026-10-06T12:00:00+00:00', 'events': [event]}
+        model = {
+            'status': 'FORECAST', 'model_version': 'football-poisson-v1', 'validation_status': 'validated',
+            'probabilities': {'Home FC': 0.58, 'Away FC': 0.42},
+            'fair_quotes': {'Home FC': 1.7241, 'Away FC': 2.381}, 'uncertainty': 0.05,
+            'source_names': ['OpenLigaDB'], 'completeness': 1.0, 'rationale': 'fixture',
+        }
+        real_forecast = betting_forecast.forecast_football
+        def forecast_for_features(current_event, current_features):
+            return model if current_features.get('status') == 'available' else real_forecast(current_event, current_features)
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'), \
+             patch.object(server, 'fetch_odds_feed', return_value=feed), \
+             patch.object(server, 'save_betting_snapshot', return_value={'id': 7, 'retrieved_at': feed['retrieved_at'], 'event_count': 1}), \
+             patch.object(betting_sources, 'source_snapshot', return_value=features), \
+             patch.object(betting_forecast, 'forecast_football', side_effect=forecast_for_features):
+            first = server.refresh_betting_snapshot()
+            second = server.refresh_betting_snapshot()
+            self.assertEqual(first['forecast_status'], 'available')
+            self.assertEqual(first['forecast_candidates'], 1)
+            self.assertEqual(len(server.latest_forecasts(7)), 2)
+            self.assertEqual(second['forecast_candidates'], 1)
+            self.assertEqual(len(server.latest_forecasts(7)), 2)
+
+            patcher = patch.object(betting_sources, 'source_snapshot', return_value={
+                'status': 'unavailable', 'completeness': 0.0, 'observations': [],
+                'sources': [{'name': 'OpenLigaDB', 'status': 'unavailable'}],
+                'retrieved_at': feed['retrieved_at'], 'errors': ['TimeoutError: timeout'],
+            })
+            with patcher:
+                failed = server.refresh_betting_snapshot()
+            self.assertEqual(failed['forecast_status'], 'unavailable')
+            self.assertEqual(failed['forecast_candidates'], 0)
+            self.assertIn('TimeoutError', failed['forecast_errors'][0])
+
     def test_betting_snapshot_roundtrip_is_persistent(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
             saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
