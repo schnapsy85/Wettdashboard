@@ -484,7 +484,7 @@ def refresh_betting_snapshot():
             forecast_errors.extend(str(error) for error in features.get('errors', []))
             save_feature_snapshot(saved['id'], event.get('id'), sport, features)
             model = betting_forecast.forecast_nfl(event, features) if sport == 'nfl' else betting_forecast.forecast_football(event, features)
-            model = {**model, 'sport': sport}
+            model = {**model, 'sport': sport, 'source_status': features.get('status')}
             save_model_run(saved['id'], event.get('id'), sport, model)
             forecasts = []
             for market in event.get('markets', []):
@@ -512,6 +512,16 @@ def refresh_betting_snapshot():
                     gated.update(bookmaker=bookmaker, best_bookmaker=bookmaker)
                     save_forecast(saved['id'], event.get('id'), sport, 'h2h', selection, gated)
                     forecasts.append(gated)
+            if not forecasts:
+                fallback = {
+                    **model, 'market': 'h2h', 'selection': 'UNAVAILABLE',
+                    'model_probability': model.get('model_probability'),
+                    'fair_quote': model.get('fair_quote'), 'market_price': None,
+                    'expected_value': None, 'status': 'NO_CALL',
+                    'reason': model.get('reason') or (features.get('errors') or ['Keine modellierte Auswahl'])[0],
+                }
+                save_forecast(saved['id'], event.get('id'), sport, 'h2h', 'UNAVAILABLE', fallback)
+                forecasts.append(fallback)
             paper = [item for item in forecasts if item.get('status') == 'PAPER']
             best = max(paper or forecasts, key=lambda item: float(item.get('expected_value') or -999), default=None)
             event['forecasts'] = forecasts
@@ -540,6 +550,9 @@ def _with_forecast_state(feed):
     by_event = defaultdict(list)
     for row in rows:
         by_event[row['event_id']].append(row)
+    source_statuses = [row.get('source_status') for row in rows]
+    feed['forecast_status'] = 'available' if 'available' in source_statuses else 'partial' if 'partial' in source_statuses else 'unavailable' if rows else 'UNAVAILABLE'
+    feed['forecast_errors'] = [row.get('reason') for row in rows if row.get('status') == 'NO_CALL' and row.get('reason')]
     for event in feed.get('events', []):
         forecasts = by_event.get(event.get('id'), [])
         paper = [item for item in forecasts if item.get('status') == 'PAPER']

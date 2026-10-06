@@ -298,7 +298,11 @@ class StatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
              patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'), \
              patch.object(server, 'fetch_odds_feed', return_value=feed), \
-             patch.object(server, 'save_betting_snapshot', return_value={'id': 7, 'retrieved_at': feed['retrieved_at'], 'event_count': 1}), \
+             patch.object(server, 'save_betting_snapshot', side_effect=[
+                 {'id': 7, 'retrieved_at': feed['retrieved_at'], 'event_count': 1},
+                 {'id': 7, 'retrieved_at': feed['retrieved_at'], 'event_count': 1},
+                 {'id': 8, 'retrieved_at': feed['retrieved_at'], 'event_count': 1},
+             ]), \
              patch.object(betting_sources, 'source_snapshot', return_value=features), \
              patch.object(betting_forecast, 'forecast_football', side_effect=forecast_for_features):
             first = server.refresh_betting_snapshot()
@@ -319,6 +323,10 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(failed['forecast_status'], 'unavailable')
             self.assertEqual(failed['forecast_candidates'], 0)
             self.assertIn('TimeoutError', failed['forecast_errors'][0])
+            failed_rows = server.latest_forecasts(8)
+            self.assertEqual(len(failed_rows), 1)
+            self.assertEqual(failed_rows[0]['status'], 'NO_CALL')
+            self.assertEqual(failed_rows[0]['selection'], 'UNAVAILABLE')
 
     def test_independent_forecast_ui_contract(self):
         html = (server.ROOT / 'betting.html').read_text()
