@@ -1,6 +1,6 @@
 # Independent Betting Forecast Design
 
-**Status:** Design approved in chat; written-spec review pending.
+**Status:** Written spec approved in chat.
 
 ## Outcome
 
