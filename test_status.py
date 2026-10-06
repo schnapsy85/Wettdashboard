@@ -189,6 +189,56 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(failed['status'], 'unavailable')
         self.assertIn('TimeoutError', ' '.join(failed['errors']))
 
+    def test_independent_forecast_contract(self):
+        import betting_forecast
+
+        football_event = {'home': 'Home FC', 'away': 'Away FC', 'competition': 'Bundesliga'}
+        football_data = {
+            'status': 'available', 'completeness': 1.0,
+            'sources': [{'name': 'OpenLigaDB', 'payload_hash': 'a'}],
+            'observations': [
+                {'kind': 'match_result', 'home': 'Home FC', 'away': 'North FC', 'home_score': 2, 'away_score': 0, 'observed_at': '2026-09-20T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'North FC', 'away': 'Home FC', 'home_score': 1, 'away_score': 1, 'observed_at': '2026-09-13T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'Away FC', 'away': 'South FC', 'home_score': 0, 'away_score': 2, 'observed_at': '2026-09-20T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'South FC', 'away': 'Away FC', 'home_score': 1, 'away_score': 0, 'observed_at': '2026-09-13T12:00:00+00:00'},
+            ],
+        }
+        football = betting_forecast.forecast_football(football_event, football_data)
+        self.assertEqual(football['status'], 'FORECAST')
+        self.assertAlmostEqual(sum(football['probabilities'].values()), 1.0, places=6)
+        self.assertEqual(football['source_names'], ['OpenLigaDB'])
+
+        nfl_event = {'home': 'HOME', 'away': 'AWAY', 'competition': 'NFL'}
+        nfl_data = {
+            'status': 'available', 'completeness': 1.0,
+            'sources': [{'name': 'nflverse', 'payload_hash': 'b'}],
+            'observations': [
+                {'kind': 'match_result', 'home': 'HOME', 'away': 'X', 'home_score': 24, 'away_score': 14, 'observed_at': '2026-09-20T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'X', 'away': 'HOME', 'home_score': 17, 'away_score': 20, 'observed_at': '2026-09-13T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'AWAY', 'away': 'Y', 'home_score': 14, 'away_score': 24, 'observed_at': '2026-09-20T12:00:00+00:00'},
+                {'kind': 'match_result', 'home': 'Y', 'away': 'AWAY', 'home_score': 21, 'away_score': 17, 'observed_at': '2026-09-13T12:00:00+00:00'},
+            ],
+        }
+        nfl = betting_forecast.forecast_nfl(nfl_event, nfl_data)
+        self.assertEqual(nfl['status'], 'FORECAST')
+        self.assertAlmostEqual(sum(nfl['probabilities'].values()), 1.0, places=6)
+
+        validated = {**football, 'validation_status': 'validated'}
+        at_two = betting_forecast.gate_forecast(validated, 2.0)
+        at_three = betting_forecast.gate_forecast(validated, 3.0)
+        self.assertEqual(at_two['model_probability'], at_three['model_probability'])
+
+        missing = betting_forecast.forecast_nfl(nfl_event, {'status': 'unavailable', 'observations': [], 'sources': [], 'completeness': 0.0})
+        self.assertEqual(missing['status'], 'NO_CALL')
+        self.assertIn('quelle', missing['reason'].lower())
+
+        outsider = betting_forecast.gate_forecast({
+            'status': 'FORECAST', 'validation_status': 'validated', 'model_version': 'test-v1',
+            'model_probability': 0.20, 'uncertainty': 0.04, 'source_names': ['test'],
+        }, 6.0)
+        self.assertEqual(outsider['status'], 'NO_CALL')
+        self.assertIn('wahrscheinlichkeit', outsider['reason'].lower())
+
     def test_betting_snapshot_roundtrip_is_persistent(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
             saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
