@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 
 SOURCE_TIMEOUT_SECONDS = 10
-MAX_RESPONSE_BYTES = 1_000_000
+MAX_RESPONSE_BYTES = 8_000_000
 OBSERVATION_MAX_AGE = timedelta(days=90)
 FOOTBALL_LEAGUES = {
     'Bundesliga': 'bl1',
@@ -51,7 +51,7 @@ def _football_url(event):
     if not league_code:
         return None
     env_key = f'OPENLIGADB_{league_code.upper()}_URL'
-    return os.environ.get(env_key, f'https://www.openligadb.de/api/getmatchdata/{league_code}/{_event_year(event)}')
+    return os.environ.get(env_key, f'https://api.openligadb.de/getmatchdata/{league_code}/{_event_year(event)}')
 
 
 def _parse_timestamp(value):
@@ -69,26 +69,30 @@ def _parse_openligadb(payload, now):
     for match in payload:
         if not isinstance(match, dict):
             continue
-        results = match.get('MatchResults') or []
-        result = results[-1] if isinstance(results, list) and results else None
-        observed_at = _parse_timestamp(match.get('MatchDateTime'))
+        if match.get('matchIsFinished') is False or match.get('MatchIsFinished') is False:
+            continue
+        results = match.get('MatchResults') or match.get('matchResults') or []
+        result = max(results, key=lambda item: int(item.get('resultOrderID', item.get('resultOrderId', 0)) or 0)) if isinstance(results, list) and results else None
+        observed_at = _parse_timestamp(match.get('matchDateTimeUTC') or match.get('MatchDateTimeUTC') or match.get('matchDateTime') or match.get('MatchDateTime'))
         if not isinstance(result, dict) or observed_at is None:
             continue
         if now - observed_at > OBSERVATION_MAX_AGE:
             stale = True
             continue
         try:
-            home_score = int(result['PointsTeam1'])
-            away_score = int(result['PointsTeam2'])
+            home_score = int(result.get('PointsTeam1') or result.get('pointsTeam1'))
+            away_score = int(result.get('PointsTeam2') or result.get('pointsTeam2'))
         except (KeyError, TypeError, ValueError):
             continue
-        home = (match.get('Team1') or {}).get('TeamName')
-        away = (match.get('Team2') or {}).get('TeamName')
+        home_data = match.get('Team1') or match.get('team1') or {}
+        away_data = match.get('Team2') or match.get('team2') or {}
+        home = home_data.get('TeamName') or home_data.get('teamName')
+        away = away_data.get('TeamName') or away_data.get('teamName')
         if not home or not away:
             continue
         observations.append({
             'kind': 'match_result',
-            'event_id': str(match.get('MatchID') or ''),
+            'event_id': str(match.get('MatchID') or match.get('matchID') or ''),
             'home': str(home),
             'away': str(away),
             'home_score': home_score,
