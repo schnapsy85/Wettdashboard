@@ -181,6 +181,15 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(camel_result['observations'][0]['home_score'], 2)
         self.assertGreaterEqual(betting_sources.MAX_RESPONSE_BYTES, 8_000_000)
 
+        zero_score_match = [{
+            'MatchID': 9, 'MatchDateTime': '2026-10-02T15:30:00Z', 'MatchIsFinished': True,
+            'Team1': {'TeamName': 'Home FC'}, 'Team2': {'TeamName': 'Away FC'},
+            'MatchResults': [{'PointsTeam1': 0, 'PointsTeam2': 0}],
+        }]
+        zero_result = betting_sources.source_snapshot(event, 'football', now, fetch_json=lambda *_args: zero_score_match)
+        self.assertEqual(zero_result['status'], 'available')
+        self.assertEqual(zero_result['observations'][0]['home_score'], 0)
+
         malformed = betting_sources.source_snapshot(event, 'football', now, fetch_json=lambda *_args: {})
         self.assertEqual(malformed['status'], 'unavailable')
         self.assertIn('malformed', ' '.join(malformed['errors']).lower())

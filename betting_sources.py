@@ -80,8 +80,14 @@ def _parse_openligadb(payload, now):
             stale = True
             continue
         try:
-            home_score = int(result.get('PointsTeam1') or result.get('pointsTeam1'))
-            away_score = int(result.get('PointsTeam2') or result.get('pointsTeam2'))
+            home_value = result.get('PointsTeam1')
+            away_value = result.get('PointsTeam2')
+            if home_value is None:
+                home_value = result.get('pointsTeam1')
+            if away_value is None:
+                away_value = result.get('pointsTeam2')
+            home_score = int(home_value)
+            away_score = int(away_value)
         except (KeyError, TypeError, ValueError):
             continue
         home_data = match.get('Team1') or match.get('team1') or {}
