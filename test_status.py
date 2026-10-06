@@ -320,6 +320,17 @@ class StatusTests(unittest.TestCase):
             self.assertEqual(failed['forecast_candidates'], 0)
             self.assertIn('TimeoutError', failed['forecast_errors'][0])
 
+    def test_independent_forecast_ui_contract(self):
+        html = (server.ROOT / 'betting.html').read_text()
+        script = (server.ROOT / 'betting.js').read_text()
+        combined = html + script
+        for marker in ('Eigene Prognose', 'Gewinnchance', 'Unsicherheit', 'Datenstand', 'model_version', 'NO_CALL'):
+            self.assertIn(marker, combined)
+        self.assertNotIn('Marktbasierte Kandidaten', html)
+        self.assertNotIn('Kein unabhängiges Vorhersagemodell', combined)
+        self.assertIn('Keine Echtgeldabgabe', html)
+        self.assertNotIn('Echtgeld platzieren', combined)
+
     def test_betting_snapshot_roundtrip_is_persistent(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(server, 'BETTING_DB', Path(directory) / 'betting.sqlite3'):
             saved = server.save_betting_snapshot({'status': 'available', 'source': 'test', 'events': []})
