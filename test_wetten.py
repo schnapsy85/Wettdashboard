@@ -95,7 +95,7 @@ class TestBettingJournal(unittest.TestCase):
         self.assertIsNone(w.extract_final_score(hidden, "Test Home", "Test Away"))
 
     def test_no_external_api_or_unapproved_host_access(self):
-        with patch("wetten_core.urlopen", side_effect=AssertionError("must not fetch")):
+        with patch("wetten_core.build_opener", side_effect=AssertionError("must not fetch")):
             result, reason = w.html_result("https://private.example/scores", "A", "B", set())
         self.assertIsNone(result)
         self.assertIn("freigegeben", reason)
