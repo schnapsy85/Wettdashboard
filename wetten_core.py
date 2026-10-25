@@ -18,14 +18,17 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, HTTPRedirectHandler
 from urllib.robotparser import RobotFileParser
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("WETTEN_DB_PATH", str(ROOT / "wetten.sqlite3")))
 SESSIONS = {}
 LOCK = threading.Lock()
 LAST_POLL = {"at": None, "result": "not_started", "scanned": 0, "updated": 0}
+ROBOTS_CACHE = {}
+FAILED_LOGINS = {}
 INTERVAL = 300
 BOOKMAKERS = {"bet365", "Winamax", "neo.bet"}
 MARKETS = {"moneyline", "1x2", "spread", "total", "btts", "double_chance", "dnb", "special"}
@@ -98,7 +101,10 @@ def euros_to_cents(value):
     return int(v * 100)
 
 def return_cents(stake_cents, odds):
-    return int((Decimal(stake_cents) * odds).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    calculated = int((Decimal(stake_cents) * odds).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    if calculated > 999_999_999_999:
+        raise ValueError("Auszahlung überschreitet das Datenbanklimit")
+    return calculated
 
 def clean(value, maximum=120):
     v = str(value or "").strip()
@@ -291,19 +297,39 @@ def evaluate(leg, home_score, away_score):
         return "won" if yes == (sel == "yes") else "lost"
     return "needs_review"
 
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def read_robots(hostname):
+    cached = ROBOTS_CACHE.get(hostname)
+    if cached and time.time() - cached[0] < 86400:
+        return cached[1]
+    robot_url = "https://" + hostname + "/robots.txt"
+    req = Request(robot_url, headers={"User-Agent": "HermesWetten/1.0"})
+    with build_opener(NoRedirect()).open(req, timeout=8) as resp:
+        if resp.status != 200 or "text/plain" not in resp.headers.get("Content-Type", ""):
+            raise ValueError("robots.txt nicht überprüfbar")
+        raw = resp.read(100_001)
+        if len(raw) > 100_000: raise ValueError("robots.txt zu groß")
+    robots = RobotFileParser()
+    robots.parse(raw.decode("utf-8", errors="replace").splitlines())
+    ROBOTS_CACHE[hostname] = (time.time(), robots)
+    return robots
+
+
 def html_result(url, home, away, allowed_hosts):
     p = urlparse(url)
     # Never follow an untrusted user URL; prevents SSRF via localhost/IPs.
-    if p.scheme != "https" or p.hostname not in allowed_hosts or p.username or p.password:
+    if p.scheme != "https" or p.hostname not in allowed_hosts or p.username or p.password or p.port not in (None, 443):
         return None, "Host nicht freigegeben"
     try:
-        robots = RobotFileParser()
-        robots.set_url("https://" + p.hostname + "/robots.txt")
-        robots.read()
+        robots = read_robots(p.hostname)
         if not robots.can_fetch("HermesWetten/1.0", url):
             return None, "robots.txt verbietet Abruf"
         req = Request(url, headers={"User-Agent": "HermesWetten/1.0"})
-        with urlopen(req, timeout=8) as resp:
+        with build_opener(NoRedirect()).open(req, timeout=8) as resp:
             if resp.geturl() != url: return None, "Weiterleitung abgelehnt"
             if "text/html" not in resp.headers.get("Content-Type", ""):
                 return None, "Kein HTML"
@@ -418,8 +444,15 @@ def handle_post(handler, path):
         if not isinstance(data, dict): raise ValueError("Ungültige Eingabe")
         if path == "/api/wetten/login":
             if not configured(): return reply(handler, {"error": "Serverpasswort nicht eingerichtet"}, 503)
+            client_ip = handler.client_address[0]
+            recent = [t for t in FAILED_LOGINS.get(client_ip, []) if time.time() - t < 900]
+            FAILED_LOGINS[client_ip] = recent
+            if len(recent) >= 5:
+                return reply(handler, {"error": "Zu viele Versuche, später erneut anmelden"}, 429)
             if not hmac.compare_digest(str(data.get("password","")), os.environ["WETTEN_PASSWORD"]):
+                FAILED_LOGINS[client_ip].append(time.time())
                 return reply(handler, {"error": "Falsches Passwort"}, 401)
+            FAILED_LOGINS.pop(client_ip, None)
             sid, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
             SESSIONS[sid] = {"csrf": csrf, "created": time.time()}
             handler.send_response(200)
