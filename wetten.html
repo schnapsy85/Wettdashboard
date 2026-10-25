@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meine Wetten · Hermes Agent</title><link rel="stylesheet" href="/wetten.css"></head>
+<body>
+<nav><a class="brand" href="/">Hermes<span>Agent</span></a><a href="/">Dashboard</a><a href="/betting">Betting Lab</a><strong>Meine Wetten</strong></nav>
+<main>
+  <header><div><p class="eyebrow">PERSÖNLICHES WETTJOURNAL</p><h1>Meine Wetten</h1><p class="muted">bet365 · Winamax · neo.bet — ausschließlich dokumentierte Wettabgaben</p></div><div class="activity" id="poller">Ergebnisprüfung wird geladen …</div></header>
+  <section class="alert">Ergebnisabgleich ohne Sportdaten-API. Nur zulässig abrufbare öffentliche HTML-Ergebnisse; unbekannte oder nicht bestätigte Endstände bleiben offen. Keine automatische Wettabgabe.</section>
+  <section id="login-panel" class="panel">
+    <h2>Privates Journal entsperren</h2>
+    <form id="login-form"><label>Dashboard-Wettpasswort<input id="password" type="password" autocomplete="current-password" required></label><button>Anmelden</button></form>
+    <p class="muted" id="login-info">Die Wettendaten werden serverseitig gespeichert und erst nach Anmeldung angezeigt.</p>
+  </section>
+  <section id="workspace" hidden>
+    <div class="toolbar"><div class="filters"><label>Buchmacher<select id="bookmaker-filter"><option value="all">Alle Buchmacher</option><option>bet365</option><option>Winamax</option><option>neo.bet</option></select></label><label>Zeitraum<select id="period-filter"><option value="all">Gesamt</option><option value="today">Heute</option><option value="month">Dieser Monat</option></select></label></div><div><button id="reload" class="secondary">Aktualisieren</button><button id="logout" class="secondary">Abmelden</button></div></div>
+    <section id="kpis" class="kpis" aria-label="Wettkennzahlen"></section>
+    <div class="split">
+      <section class="panel"><h2>Neue Wette erfassen</h2>
+        <form id="create-form">
+          <div class="form-grid"><label>Buchmacher<select name="bookmaker" required><option>bet365</option><option>Winamax</option><option>neo.bet</option></select></label><label>Zeitpunkt der Wettabgabe<input name="placed_at" type="datetime-local" required></label><label>Einsatz (€)<input name="stake" type="number" min="0.01" step="0.01" placeholder="20.00" required></label><label>Kommentar<input name="note" maxlength="500" placeholder="optional"></label></div>
+          <h3>Auswahlen</h3><div id="legs"></div><button type="button" class="secondary" id="add-leg">+ Weitere Auswahl (Kombi)</button>
+          <div class="action"><button type="submit">Wette speichern</button><p id="form-status" role="status"></p></div>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>Wichtige Hinweise</h2><p class="muted">Einzelwetten und Kombiwetten werden separat abgerechnet. Die automatische Prüfung verwendet nur eindeutige finale Ergebnisse aus öffentlichen HTML-Seiten. Für Sondermärkte oder nicht verifizierbare Quellen ist eine manuelle Abrechnung nötig.</p>
+        <p class="muted">Die HTML-Quellenprüfung muss vom Serveradministrator ausdrücklich für erlaubte Domains eingerichtet werden. Ohne freigegebene Quellen erfolgen keine externen Abrufe.</p>
+        <p class="muted">ROI = realisierter Nettogewinn geteilt durch den Einsatz bereits abgerechneter Wetten. Offene Wetten werden dabei nicht als Verlust gezählt.</p>
+      </section>
+    </div>
+    <section class="panel"><div class="list-head"><h2>Wettübersicht</h2><span id="count" class="muted"></span></div><div id="tickets" class="tickets"></div></section>
+  </section>
+</main>
+<template id="leg-template">
+  <fieldset class="leg"><legend>Auswahl</legend><button type="button" class="remove-leg secondary">Entfernen</button>
+    <div class="form-grid">
+      <label>Sport<input name="sport" required placeholder="NFL, Fußball, Darts"></label>
+      <label>Liga<input name="league" placeholder="NFL"></label>
+      <label>Heimteam<input name="home" required></label><label>Gastteam<input name="away" required></label>
+      <label>Spielbeginn<input name="kickoff" type="datetime-local"></label>
+      <label>Markt<select name="market"><option value="moneyline">Sieg (2-Wege)</option><option value="1x2">1X2 (3-Wege)</option><option value="spread">Handicap / Spread</option><option value="total">Über / Unter</option><option value="double_chance">Doppelte Chance</option><option value="dnb">Draw No Bet</option><option value="btts">Beide treffen</option><option value="special">Spezialmarkt (manuell)</option></select></label>
+      <label>Auswahl<select name="selection"><option value="home">Heim</option><option value="away">Gast</option><option value="draw">Remis (X)</option><option value="over">Über</option><option value="under">Unter</option><option value="1x">1X</option><option value="x2">X2</option><option value="12">12</option><option value="yes">Ja</option><option value="no">Nein</option></select></label>
+      <label>Linie (Handicap / Total)<input name="line" placeholder="+3, -3, 2.5"></label>
+      <label>Quote<input name="odds" type="number" min="1" step="0.01" placeholder="1.72" required></label>
+      <label>Gültige Spielzeit<select name="period"><option value="full_game">Gesamtes Spiel inkl. Verlängerung</option><option value="regulation">Reguläre Spielzeit (manuelle Prüfung)</option></select></label>
+      <label>Öffentliche HTML-Ergebnisseite (optional)<input name="result_url" type="url" placeholder="https://..." autocomplete="off"></label>
+    </div>
+  </fieldset>
+</template>
+<script src="/wetten.js"></script></body></html>
