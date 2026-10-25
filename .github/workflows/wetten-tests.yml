@@ -19,6 +19,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Validate syntax
-        run: python -m py_compile wetten_core.py server.py test_wetten.py
+        run: python -m py_compile wetten_core.py server.py test_wetten.py test_wetten_api.py
       - name: Run tests without network
-        run: python -m unittest -v test_wetten.py
+        run: python -m unittest -v test_wetten.py test_wetten_api.py
