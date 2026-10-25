@@ -1,0 +1,24 @@
+name: Wetten journal tests
+on:
+  push:
+    branches:
+      - feature/meine-wetten-html-results
+  pull_request:
+    paths:
+      - "wetten*"
+      - "server.py"
+      - "index.html"
+      - ".github/workflows/wetten-tests.yml"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate syntax
+        run: python -m py_compile wetten_core.py server.py test_wetten.py test_wetten_api.py
+      - name: Run tests without network
+        run: python -m unittest -v test_wetten.py test_wetten_api.py

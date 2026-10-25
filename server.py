@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import date, datetime
 from urllib.parse import parse_qs, urlencode, urlparse
 import hyperliquid_bot
+import wetten_core
 
 FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
 
@@ -331,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == '/finanzen.html': self.path = '/finanzen.html'
+        if parsed.path.startswith('/api/wetten/'):
+            return wetten_core.handle_get(self, parsed.path)
         if parsed.path.startswith('/api/finance/'):
             return self.finance_get(parsed.path)
         if self.path == '/api/systems': return self.send_json(systems())
@@ -345,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/trading': self.path='/trading.html'
         if self.path == '/api/odds': return self.send_json(odds_feed())
         if self.path == '/betting': self.path='/betting.html'
+        if self.path == '/wetten': self.path='/wetten.html'
         if self.path == '/': self.path='/index.html'
         file = ROOT / self.path.lstrip('/')
         if file.is_file() and ROOT in file.parents:
@@ -352,6 +356,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path.startswith('/api/wetten/'):
+            return wetten_core.handle_post(self, parsed.path)
         if parsed.path.startswith('/api/finance/'):
             return self.finance_post(parsed.path)
         self.send_error(404)
@@ -428,5 +434,5 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
 
 if __name__ == '__main__':
-    finance_connect().close(); finance_backup()
+    finance_connect().close(); finance_backup(); wetten_core.start_poller()
     ThreadingHTTPServer(('0.0.0.0',8787),Handler).serve_forever()
