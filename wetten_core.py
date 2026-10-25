@@ -45,6 +45,22 @@ def connection():
     con.execute("PRAGMA busy_timeout=10000")
     return con
 
+def backup_if_due():
+    """SQLite online backup, at most once per UTC calendar day."""
+    if not DB_PATH.exists():
+        return
+    target_dir = DB_PATH.parent / "backups" / "wetten"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / (datetime.now(timezone.utc).strftime("%Y-%m-%d") + ".sqlite3")
+    if target.exists():
+        return
+    temporary = target.with_suffix(".sqlite3.tmp")
+    with connection() as source, sqlite3.connect(temporary) as destination:
+        source.backup(destination)
+    os.chmod(temporary, 0o600)
+    temporary.replace(target)
+
+
 def init_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with connection() as con:
@@ -404,6 +420,10 @@ def start_poller():
     init_db()
     def loop():
         while True:
+            try:
+                backup_if_due()
+            except (OSError, sqlite3.Error) as exc:
+                LAST_POLL.update(at=now(),result='backup_error_'+type(exc).__name__)
             check_once()
             time.sleep(INTERVAL)
     threading.Thread(target=loop, name="wetten-html-poller", daemon=True).start()
