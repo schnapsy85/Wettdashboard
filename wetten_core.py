@@ -176,6 +176,17 @@ def create_ticket(payload):
         selection = clean(item.get("selection"), 50).lower()
         if not sport or not selection:
             raise ValueError("Sport und Tipp erforderlich")
+        allowed = {
+            "moneyline": {"home", "away"},
+            "1x2": {"home", "away", "draw"},
+            "dnb": {"home", "away"},
+            "spread": {"home", "away"},
+            "total": {"over", "under"},
+            "btts": {"yes", "no"},
+            "double_chance": {"1x", "x2", "12"}
+        }
+        if market in allowed and selection not in allowed[market]:
+            raise ValueError("Auswahl passt nicht zum Wettmarkt")
         leg = (sport, clean(item.get("league")), home, away, clean(item.get("kickoff"), 35),
                market, selection, line, period, str(leg_odds), url)
         legs.append(leg)
@@ -293,7 +304,7 @@ def evaluate(leg, home_score, away_score):
     h, a = home_score, away_score
     if m in ("moneyline", "1x2", "dnb"):
         winner = "home" if h > a else "away" if a > h else "draw"
-        if m == "dnb" and winner == "draw": return "push"
+        if m in ("moneyline", "dnb") and winner == "draw": return "push"
         return "won" if sel == winner else "lost"
     if m == "double_chance":
         winner = "1" if h > a else "2" if a > h else "x"
