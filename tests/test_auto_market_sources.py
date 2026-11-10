@@ -65,6 +65,12 @@ class AutoMarketSourcesTests(unittest.TestCase):
         self.assertEqual(listing['long_version_evidence'], 'Lang')
         self.assertEqual(listing['accident_free_evidence'], 'unfallfrei')
 
+    def test_parse_listing_html_ignores_unrelated_long_text(self):
+        body = LISTING_HTML.replace('"name":"VW Multivan lang"', '"name":"VW Multivan"').replace('<body>Lang, unfallfrei</body>', '<body>Besichtigung am Montag. Lang, unfallfrei</body>')
+        listing = auto_market_sources.parse_listing_html(body, 'https://mobile.de/angebot/456')
+        self.assertIsNone(listing['profile'])
+        self.assertEqual(listing['long_version_evidence'], '')
+
     def test_unknown_source_is_rejected_before_fetch(self):
         self.assertFalse(auto_market_sources.is_trusted_url('https://unknown.example/car'))
         with patch.object(auto_market_sources.urllib.request, 'urlopen') as opener:

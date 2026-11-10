@@ -139,7 +139,8 @@ same dashboard backend.
 
 ## Status
 
-Approved direction for the next revision: remove the Auto Screener password
-flow and make the scheduled worker the primary discovery path. Live results
-remain unavailable until the web-search adapter is connected; the page fails
-closed and shows no invented listings without it.
+Implemented: the Auto Screener has no separate password flow, the page uses
+the dashboard CSRF cookie for favorite writes, and the scheduled worker remains
+the primary discovery path. Live results remain unavailable until the web-search
+adapter is connected; the page fails closed and shows no invented listings
+without it.

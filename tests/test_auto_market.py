@@ -68,6 +68,13 @@ class AutoMarketDomainTests(unittest.TestCase):
     def test_normalize_candidate_rejects_wrong_model_for_profile(self):
         self.assertIsNone(auto_market.normalize_candidate(candidate(title='Ford Tourneo Custom lang')))
 
+    def test_normalize_candidate_rejects_long_evidence_not_bound_to_vehicle_title(self):
+        self.assertIsNone(auto_market.normalize_candidate(candidate(title='VW Multivan T7 eHybrid', long_version_evidence='Lang')))
+
+    def test_normalize_candidate_rejects_malformed_numeric_formats(self):
+        self.assertIsNone(auto_market.normalize_candidate(candidate(price_eur='39.5,00 EUR')))
+        self.assertIsNone(auto_market.normalize_candidate(candidate(mileage_km='1,234 km')))
+
     def test_matches_filters_uses_inclusive_boundaries(self):
         listing = auto_market.normalize_candidate(candidate(price_eur='40.000 EUR', distance_km='250'))
 
@@ -90,6 +97,10 @@ class AutoMarketDomainTests(unittest.TestCase):
 
         transient = auto_market.refresh_listings(lambda: [], lambda url: {'status_code': 503})
         self.assertEqual(transient['removed'], 0)
+        self.assertEqual(len(auto_market.list_active_listings(40000, 250)), 1)
+
+        ambiguous = auto_market.refresh_listings(lambda: [], lambda url: {'available': False})
+        self.assertEqual(ambiguous['removed'], 0)
         self.assertEqual(len(auto_market.list_active_listings(40000, 250)), 1)
 
         gone = auto_market.refresh_listings(lambda: [], lambda url: {'status_code': 404})

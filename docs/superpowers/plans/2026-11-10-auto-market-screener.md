@@ -92,13 +92,28 @@
 - Modify: `docs/superpowers/specs/2026-11-10-auto-market-screener-design.md` status
 - Modify: `HERMES.md` only if the refresh configuration needs a documented environment variable entry
 
-- [ ] **Step 1: Run `python3 -m unittest -v` and fix only regressions caused by the screener.**
-- [ ] **Step 2: Run a local dashboard smoke check** that loads `/auto-market`, receives the dashboard CSRF cookie, loads both profiles, changes the global filters, favorites one listing, starts a fresh page session, and confirms the favorite remains.
-- [ ] **Step 3: Check responsive markup, keyboard access, external-link safety, missing-image fallback, and no-results messaging at desktop and mobile widths.**
-- [ ] **Step 4: Remove `AUTO_MARKET_PASSWORD` from `HERMES.md`, update the design status, and record any missing live search adapter or source limitation explicitly.**
+- [x] **Step 1: Run `python3 -m unittest -v` and fix only regressions caused by the screener.**
+- [x] **Step 2: Run a local dashboard smoke check** that loads `/auto-market`, receives the dashboard CSRF cookie, loads both profiles, changes the global filters, favorites one listing, starts a fresh page session, and confirms the favorite remains.
+- [x] **Step 3: Check responsive markup, keyboard access, external-link safety, missing-image fallback, and no-results messaging at desktop and mobile widths.** Static inspection passed; the installed desktop/tablet/mobile browser-QA also passed with no overflow, console errors, page errors, or failed requests.
+- [x] **Step 4: Remove `AUTO_MARKET_PASSWORD` from `HERMES.md`, update the design status, and record any missing live search adapter or source limitation explicitly.**
 
 ## Execution Notes
 
 - Keep commits small and task-scoped; do not reformat unrelated files.
 - If the live search provider is not configured, the page must still load and report the refresh as unavailable rather than showing invented or fixture listings.
 - Do not claim broad live coverage until at least one configured discovery run and one source re-check succeed against real public pages.
+
+## Review Ledger
+
+- Fixed: long-version evidence is accepted only when the vehicle title or
+  vehicle structured data also contains a long-version marker; unrelated page
+  text cannot qualify the listing.
+- Fixed: numeric parsing now rejects malformed mixed separators such as
+  `39.5,00` and `1,234` instead of guessing their meaning.
+- Fixed: an ambiguous provider response of `available: false` preserves the
+  listing; transient or incomplete checks must not delete active offers.
+- Ruling: a direct re-check of the original offer returning HTTP `404` or `410`
+  is definitive unavailability and removes that listing from active results.
+- Deferred: canonical-host validation for provider-supplied canonical URLs and
+  a richer explicit stale/source-quality state remain follow-up work because
+  they do not change the current fail-closed result behavior.

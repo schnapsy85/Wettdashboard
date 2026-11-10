@@ -98,6 +98,18 @@ def _nested_text(value):
     return str(value or '')
 
 
+def _vehicle_documents(documents):
+    vehicle_types = {'car', 'vehicle', 'product'}
+    selected = []
+    for document in documents:
+        raw_types = document.get('@type')
+        types = raw_types if isinstance(raw_types, list) else [raw_types]
+        normalized = {str(item).lower() for item in types if item}
+        if normalized & vehicle_types or any(key in document for key in ('vehicleModelDate', 'mileageFromOdometer')):
+            selected.append(document)
+    return selected
+
+
 def _year(value):
     match = re.search(r'\b(20\d{2})\b', _nested_text(value))
     return int(match.group(1)) if match else None
@@ -119,10 +131,12 @@ def parse_listing_html(body, url, context=None):
     parser = _ListingParser()
     parser.feed(body)
     documents = _structured_documents(parser)
+    vehicle_documents = _vehicle_documents(documents)
     page_text = html.unescape(' '.join(parser.visible))
     structured_text = ' '.join(_nested_text(document) for document in documents)
     evidence_text = f'{page_text} {structured_text}'
-    name = _first(documents, 'name', 'model', 'title') or parser.meta.get('og:title') or ''.join(parser.title)
+    vehicle_text = ' '.join(_nested_text(document) for document in vehicle_documents)
+    name = _first(vehicle_documents, 'name', 'model', 'title') or parser.meta.get('og:title') or ''.join(parser.title)
     offers = _first(documents, 'offers') or {}
     mileage = _first(documents, 'mileageFromOdometer', 'mileage')
     address = _first(documents, 'address')
@@ -141,14 +155,19 @@ def parse_listing_html(body, url, context=None):
         location = address
     context = context or {}
     name = _nested_text(name).strip()
-    haystack = f'{name} {evidence_text}'.lower()
+    vehicle_evidence_text = f'{name} {vehicle_text}'
+    haystack = vehicle_evidence_text.lower()
     if 'multivan' in haystack and re.search(r'\b(lang|long|l2)\b', haystack):
         profile = 'vw_multivan_long'
     elif 'tourneo custom' in haystack and re.search(r'\b(lang|long|l2)\b', haystack):
         profile = 'ford_tourneo_custom_long'
     else:
         profile = context.get('profile')
-    long_evidence = _evidence(evidence_text, r'\b(?:lang|long|l2)\b')
+    long_pattern = r'\b(?:lang|long|l2|lwb)\b'
+    if re.search(long_pattern, vehicle_evidence_text, re.IGNORECASE):
+        long_evidence = _evidence(page_text, long_pattern) or _evidence(vehicle_evidence_text, long_pattern)
+    else:
+        long_evidence = ''
     accident_evidence = _evidence(evidence_text, r'\bunfallfrei\b')
     parsed_url = _canonical_url(parser.canonical or url)
     return {

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
+import math
 import sqlite3
 from contextlib import closing
 from datetime import datetime
@@ -42,19 +43,25 @@ def _number(value, integer=False):
     if isinstance(value, bool) or value is None:
         return None
     if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            return None
         return int(value) if integer else float(value)
     raw = re.sub(r'[^0-9,.-]', '', str(value).strip())
     if not raw:
         return None
-    if ',' in raw:
-        raw = raw.replace('.', '').replace(',', '.')
-    elif integer and raw.count('.') == 1 and len(raw.rsplit('.', 1)[1]) == 3:
-        raw = raw.replace('.', '')
-    try:
-        parsed = float(raw)
-    except ValueError:
+    if integer:
+        if raw.isdigit():
+            return int(raw)
+        if re.fullmatch(r'\d{1,3}(?:\.\d{3})+', raw):
+            return int(raw.replace('.', ''))
         return None
-    return int(parsed) if integer else parsed
+    if re.fullmatch(r'\d+', raw):
+        return float(raw)
+    if re.fullmatch(r'\d+[.,]\d+', raw):
+        return float(raw.replace(',', '.'))
+    if re.fullmatch(r'\d{1,3}(?:\.\d{3})+,\d+', raw):
+        return float(raw.replace('.', '').replace(',', '.'))
+    return None
 
 
 def _text(value):
@@ -103,6 +110,8 @@ def normalize_candidate(candidate):
     if profile == 'vw_multivan_long' and 'multivan' not in title_lower:
         return None
     if profile == 'ford_tourneo_custom_long' and not all(term in title_lower for term in ('tourneo', 'custom')):
+        return None
+    if not re.search(r'\b(?:lang|long|l2|lwb)\b', title_lower) or not re.search(r'\b(?:lang|long|l2|lwb)\b', long_evidence.lower()):
         return None
     if year < profile_config['min_year'] or mileage > profile_config['max_mileage_km']:
         return None
@@ -255,9 +264,6 @@ def refresh_listings(discover, fetch):
                 failed += 1
                 con.execute('UPDATE listings SET last_checked=?, last_error=? WHERE id=?', (_now(), type(exc).__name__, row['id']))
             if isinstance(checked, dict) and int(checked.get('status_code', 0) or 0) in (404, 410):
-                con.execute('DELETE FROM listings WHERE id = ?', (row['id'],))
-                removed += 1
-            elif isinstance(checked, dict) and checked.get('available') is False:
                 con.execute('DELETE FROM listings WHERE id = ?', (row['id'],))
                 removed += 1
             elif checked is not None:
