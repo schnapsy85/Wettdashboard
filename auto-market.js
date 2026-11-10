@@ -25,18 +25,6 @@ function text(value) {
   return value == null || value === '' ? 'UNAVAILABLE' : String(value);
 }
 
-function showLogin(message = '') {
-  $('#login-panel').classList.remove('hidden');
-  $('#app-panel').classList.add('hidden');
-  $('#login-error').textContent = message;
-}
-
-function showApp() {
-  $('#login-panel').classList.add('hidden');
-  $('#app-panel').classList.remove('hidden');
-  $('#login-error').textContent = '';
-}
-
 function addFact(dl, label, value) {
   const dt = document.createElement('dt');
   const dd = document.createElement('dd');
@@ -163,7 +151,6 @@ function renderState(state) {
     ? `Letzte Pruefung: ${text(refresh.finished_at || refresh.started_at)} · Naechster Lauf: ${text(state.next_refresh)}`
     : `Noch keine Pruefung · Naechster Lauf: ${text(state.next_refresh)}`;
   renderProfiles();
-  showApp();
 }
 
 async function loadState() {
@@ -174,29 +161,9 @@ async function loadState() {
   try {
     renderState(await api('/api/auto-market/state?' + params));
   } catch (error) {
-    if (error.status === 401) showLogin();
-    else $('#refresh-state').textContent = error.message;
+    $('#refresh-state').textContent = error.message;
   }
 }
-
-$('#login-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const button = event.target.querySelector('button');
-  button.disabled = true;
-  try {
-    await api('/api/auto-market/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({password: $('#password').value}),
-    });
-    $('#password').value = '';
-    await loadState();
-  } catch (error) {
-    showLogin(error.message);
-  } finally {
-    button.disabled = false;
-  }
-});
 
 $('#filter-form').addEventListener('submit', event => {
   event.preventDefault();

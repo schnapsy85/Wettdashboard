@@ -4,7 +4,7 @@
 
 **Goal:** Add a two-profile car market screener that discovers qualifying public listings, refreshes them four times per day, and persists cross-device favorites in the dashboard.
 
-**Architecture:** Keep the existing Python stdlib HTTP server and SQLite storage. A focused `auto_market.py` module owns normalized listings, filtering, persistence, and refresh orchestration; the HTML page consumes narrow JSON endpoints. Discovery uses a configured search provider plus an explicit source registry and source parsers, so broad discovery cannot bypass the data-quality rules.
+**Architecture:** Keep the existing Python stdlib HTTP server and SQLite storage. A focused `auto_market.py` module owns normalized listings, filtering, persistence, and refresh orchestration; the HTML page consumes narrow JSON endpoints. The scheduled worker performs discovery through a technical web-search adapter and an explicit trusted-source registry, while the page adds no separate Auto Screener password.
 
 **Tech Stack:** Python 3 stdlib, `sqlite3`, `urllib`, `html.parser`, existing `http.server` dashboard, plain HTML/CSS/JavaScript, systemd service/timer.
 
@@ -19,6 +19,7 @@
 - Refresh four times per day in `Europe/Berlin` local time.
 - Remove a listing only after confirmed unavailability; transient source failures must not delete it.
 - Use the existing backend, SQLite, and plain HTML/CSS; add no frontend framework or dependency.
+- Do not add `AUTO_MARKET_PASSWORD` or a second login flow; use the dashboard's existing deployment boundary and CSRF token for favorite writes.
 - Do not scrape login-only or paywalled pages, infer accident-free status, or guarantee complete web coverage.
 
 ## Review Focus
@@ -27,7 +28,7 @@
 - A listing with missing price, mileage, year, location, image, or canonical URL must not appear in the preview; test in Task 1.
 - German price, mileage, decimal, and location formats must normalize without accepting invalid values; test in Task 1.
 - A transient fetch/search failure must preserve an existing active listing, while a confirmed 404 removes it; test in Task 3.
-- A favorite must survive a new browser session and be isolated behind the dashboard user's protected session; test in Task 2.
+- A favorite must survive a new browser session and require the dashboard CSRF token; test in Task 2.
 
 ### Task 1: Listing domain, normalization, filtering, and database
 
@@ -45,7 +46,7 @@
 - [ ] **Step 4: Implement `refresh_listings(discover, fetch)`** so discovery candidates are normalized and upserted, known listings are rechecked, confirmed unavailable listings are removed, and provider failures are recorded without deleting active rows.
 - [ ] **Step 5: Run the focused test file and then `python3 -m unittest tests.test_auto_market -v`; verify PASS.**
 
-### Task 2: Protected API and screener page
+### Task 2: Dashboard-bound API and screener page
 
 **Files:**
 - Modify: `server.py` in `Handler.do_GET`, `Handler.do_POST`, and dashboard auth helpers
@@ -56,14 +57,14 @@
 
 **Interfaces:**
 - Consumes Task 1's `auto_connect`, `list_active_listings`, `set_favorite`, and filter constants.
-- Produces `GET /api/auto-market/state`, `POST /api/auto-market/favorite`, and `POST /api/auto-market/login` using JSON and the existing CSRF pattern. `state` returns `profiles`, `filters`, `listings`, `last_refresh`, and `next_refresh`.
+- Produces `GET /api/auto-market/state` and `POST /api/auto-market/favorite` using JSON and the dashboard CSRF cookie/header pattern. `state` returns `csrf`, `profiles`, `filters`, `listings`, `last_refresh`, and `next_refresh`; there is no Auto Screener login endpoint.
 
-- [ ] **Step 1: Write failing HTTP tests** for unauthenticated access, password login from `AUTO_MARKET_PASSWORD`, CSRF-protected state/favorite calls, editable filter bounds, and a favorite visible after a fresh authenticated request.
-- [ ] **Step 2: Run `python3 -m unittest tests.test_auto_market_http -v` and verify the new tests fail.**
-- [ ] **Step 3: Add the minimal single-user session** following the existing finance session pattern, with `HttpOnly`, `SameSite=Strict` cookie and a per-session CSRF token; do not create multi-user registration.
-- [ ] **Step 4: Add the three JSON routes** and validate integer filters, request size, listing IDs, and boolean favorite values at the trust boundary.
-- [ ] **Step 5: Build `auto-market.html` and `auto-market.js`** with both sections on one responsive page, default filters of 250 km and 40,000 EUR, card previews, original links, image fallback, favorite controls, last-update state, and accessible empty/loading/error states.
-- [ ] **Step 6: Add the `Auto Screener` navigation entry and route serving, then run the focused HTTP tests and `python3 -m unittest -v`; verify PASS.**
+- [x] **Step 1: Write failing HTTP tests** for state access without a separate login, dashboard cookie issuance on `/auto-market`, CSRF-protected favorite calls, editable filter bounds, and a favorite visible after a fresh page session.
+- [x] **Step 2: Run `python3 -m unittest tests.test_auto_market_http -v` and verify the new tests fail.**
+- [x] **Step 3: Remove `AUTO_MARKET_SESSIONS`, password login, and the Auto Screener session helper** from `server.py`; keep the existing dashboard CSRF cookie and require its matching header for favorite writes.
+- [x] **Step 4: Keep `GET /api/auto-market/state` public within the dashboard deployment boundary** and ensure `/auto-market` issues a dashboard CSRF cookie when absent; retain integer filter, request-size, listing-ID, and boolean-value validation.
+- [x] **Step 5: Remove the login panel and login JavaScript** while keeping both profile sections, default filters of 250 km and 40,000 EUR, card previews, original links, image fallback, favorite controls, last-update state, and accessible empty/error states.
+- [x] **Step 6: Run the focused HTTP tests and `python3 -m unittest -v`; verify PASS.**
 
 ### Task 3: Discovery, source registry, and scheduled refresh
 
@@ -92,9 +93,9 @@
 - Modify: `HERMES.md` only if the refresh configuration needs a documented environment variable entry
 
 - [ ] **Step 1: Run `python3 -m unittest -v` and fix only regressions caused by the screener.**
-- [ ] **Step 2: Run a local dashboard smoke check** that logs in, loads both profiles, changes the global filters, favorites one listing, starts a new session, and confirms the favorite remains.
+- [ ] **Step 2: Run a local dashboard smoke check** that loads `/auto-market`, receives the dashboard CSRF cookie, loads both profiles, changes the global filters, favorites one listing, starts a fresh page session, and confirms the favorite remains.
 - [ ] **Step 3: Check responsive markup, keyboard access, external-link safety, missing-image fallback, and no-results messaging at desktop and mobile widths.**
-- [ ] **Step 4: Update the design status to implemented and record any missing live search credential or source limitation explicitly.**
+- [ ] **Step 4: Remove `AUTO_MARKET_PASSWORD` from `HERMES.md`, update the design status, and record any missing live search adapter or source limitation explicitly.**
 
 ## Execution Notes
 

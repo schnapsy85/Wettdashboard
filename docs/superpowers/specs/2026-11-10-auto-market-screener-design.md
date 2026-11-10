@@ -65,9 +65,10 @@ The navigation gets an `Auto Screener` entry. The page contains:
 - Empty, stale, and source-quality states that explain why no result is shown.
 
 Favorites are stored in the server database and keyed to the dashboard user.
-If the existing deployment does not provide a general dashboard login, add the
-smallest single-user password session needed to protect these records; do not
-introduce a multi-user account system for this first version.
+The Auto Screener must not add a separate password prompt. It inherits the
+dashboard's existing deployment/network access boundary and keeps CSRF
+protection for favorite changes. A general dashboard login remains a separate
+security project rather than being invented for this page.
 
 ## Refresh and availability
 
@@ -83,9 +84,10 @@ otherwise valid data.
 
 ## Implementation approach
 
-Use the selected hybrid approach:
+Use the selected automatic hybrid approach:
 
-- A broad web-search/discovery step finds candidate public listing pages.
+- A local scheduled worker performs a broad web-search/discovery step four
+  times daily; it does not depend on a chat turn being active.
 - A small source registry allows only known reliable sources to enter the
   active result set.
 - Source adapters parse each approved source into one normalized listing shape.
@@ -95,9 +97,12 @@ Use the selected hybrid approach:
 - The existing plain HTML/CSS dashboard style is extended with one new page;
   no frontend framework or new dependency is needed.
 
-This balances coverage with data quality. Directly scraping every automotive
-site would be broader on paper but would be brittle and would make reliable
-field extraction difficult to maintain.
+The worker uses a web-search adapter for discovery and then fetches the public
+listing pages itself. The adapter is a technical provider boundary, not a user
+password: its credentials, if required by the chosen search service, live only
+in the service environment. This balances coverage with data quality. Directly
+scraping every automotive site would be broader on paper but would be brittle
+and would make reliable field extraction difficult to maintain.
 
 ## Non-goals
 
@@ -120,8 +125,8 @@ field extraction difficult to maintain.
   confirmed unavailability.
 - The first version uses the existing backend and SQLite rather than adding a
   hosted database or framework.
-- The first version uses one protected dashboard user, with an upgrade path to
-  multiple users only if the dashboard later needs it.
+- The Auto Screener adds no separate user password; access follows the existing
+  dashboard deployment boundary.
 - The initial refresh schedule uses four evenly spaced local times and can be
   changed in configuration later.
 
@@ -134,6 +139,7 @@ same dashboard backend.
 
 ## Status
 
-Implemented in the dashboard code. Live results remain unavailable until
-`AUTO_MARKET_SEARCH_URL` and `AUTO_MARKET_PASSWORD` are configured; the page
-fails closed and shows no invented listings without them.
+Approved direction for the next revision: remove the Auto Screener password
+flow and make the scheduled worker the primary discovery path. Live results
+remain unavailable until the web-search adapter is connected; the page fails
+closed and shows no invented listings without it.

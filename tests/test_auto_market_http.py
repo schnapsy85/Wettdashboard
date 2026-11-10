@@ -33,11 +33,9 @@ class AutoMarketHttpTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.db = Path(self.temp.name) / 'auto-market.sqlite3'
         os.environ['AUTO_MARKET_DB'] = str(self.db)
-        os.environ['AUTO_MARKET_PASSWORD'] = 'test-password'
+        os.environ.pop('AUTO_MARKET_PASSWORD', None)
         auto_market.auto_connect().close()
         auto_market.refresh_listings(lambda: [candidate()], lambda url: None)
-        if hasattr(server, 'AUTO_MARKET_SESSIONS'):
-            server.AUTO_MARKET_SESSIONS.clear()
         self.httpd = server.ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -74,32 +72,34 @@ class AutoMarketHttpTests(unittest.TestCase):
     def cookie(headers):
         return headers['Set-Cookie'].split(';', 1)[0]
 
-    def login(self):
-        status, headers, _ = self.request('POST', '/api/auto-market/login', {'password': 'test-password'})
+    def page_session(self):
+        status, headers, body = self.request('GET', '/auto-market')
         self.assertEqual(status, 200)
+        self.assertIn('Auto Screener', body)
+        self.assertIn('Set-Cookie', headers)
         return self.cookie(headers)
 
-    def test_state_requires_login_and_login_sets_protected_cookie(self):
-        status, _, body = self.request('GET', '/api/auto-market/state')
-        self.assertEqual(status, 401)
-        self.assertEqual(body['error'], 'Anmeldung erforderlich')
-
-        status, headers, body = self.request('POST', '/api/auto-market/login', {'password': 'test-password'})
+    def test_state_is_available_without_separate_login_and_page_sets_csrf_cookie(self):
+        cookie = self.page_session()
+        status, _, state = self.request('GET', '/api/auto-market/state', cookie=cookie)
         self.assertEqual(status, 200)
-        self.assertTrue(body['ok'])
-        self.assertIn('HttpOnly', headers['Set-Cookie'])
-        self.assertIn('SameSite=Strict', headers['Set-Cookie'])
+        self.assertEqual(len(state['profiles']), 2)
+        self.assertTrue(state['csrf'])
+
+        status, _, body = self.request('POST', '/api/auto-market/login', {})
+        self.assertEqual(status, 404)
+        self.assertEqual(body['error'], 'Nicht gefunden')
 
     def test_state_returns_profiles_and_editable_filters(self):
-        cookie = self.login()
+        cookie = self.page_session()
         status, _, state = self.request('GET', '/api/auto-market/state?max_price_eur=39999&max_distance_km=200', cookie=cookie)
         self.assertEqual(status, 200)
         self.assertEqual(state['filters'], {'max_price_eur': 39999, 'max_distance_km': 200})
         self.assertEqual([profile['id'] for profile in state['profiles']], ['vw_multivan_long', 'ford_tourneo_custom_long'])
         self.assertEqual(len(state['listings']), 1)
 
-    def test_favorite_requires_csrf_and_survives_a_fresh_login(self):
-        cookie = self.login()
+    def test_favorite_requires_csrf_and_survives_a_fresh_page_session(self):
+        cookie = self.page_session()
         status, _, state = self.request('GET', '/api/auto-market/state', cookie=cookie)
         self.assertEqual(status, 200)
         listing_id = state['listings'][0]['id']
@@ -111,7 +111,7 @@ class AutoMarketHttpTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(body['favorite'])
 
-        fresh_cookie = self.login()
+        fresh_cookie = self.page_session()
         status, _, fresh_state = self.request('GET', '/api/auto-market/state', cookie=fresh_cookie)
         self.assertEqual(status, 200)
         self.assertTrue(fresh_state['listings'][0]['favorite'])
@@ -120,6 +120,8 @@ class AutoMarketHttpTests(unittest.TestCase):
         status, _, body = self.request('GET', '/auto-market.html')
         self.assertEqual(status, 200)
         self.assertIn('Auto Screener', body if isinstance(body, str) else '')
+        self.assertNotIn('Dashboard-Zugang', body if isinstance(body, str) else '')
+        self.assertNotIn('id="password"', body if isinstance(body, str) else '')
 
 
 if __name__ == '__main__':

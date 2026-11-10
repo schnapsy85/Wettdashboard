@@ -10,7 +10,7 @@
 
 ## Auto Market Screener
 
-- Configure `AUTO_MARKET_PASSWORD` and `AUTO_MARKET_SEARCH_URL` in `~/.hermes/.env`; `AUTO_MARKET_SEARCH_TOKEN` is optional.
+- Configure `AUTO_MARKET_SEARCH_URL` in `~/.hermes/.env`; `AUTO_MARKET_SEARCH_TOKEN` is optional.
 - The search endpoint must return JSON with a `results` list containing public listing URLs and `distance_km` values from Norderstedt.
 - Enable the refresh schedule with `systemctl --user enable --now auto-market-refresh.timer` after installing the unit files.
 

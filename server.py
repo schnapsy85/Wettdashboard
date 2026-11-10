@@ -72,7 +72,6 @@ FINANCE_BACKUP_DIR = ROOT / 'backups'
 FINANCE_SESSIONS = {}
 FINANCE_PREVIEWS = {}
 FINANCE_MAX_UPLOAD = 5 * 1024 * 1024
-AUTO_MARKET_SESSIONS = {}
 
 FINANCE_ACCOUNTS = (
     ('Trade Republic Kreditkarte', 'creditcard'), ('comdirect Girokonto', 'checking'),
@@ -122,28 +121,6 @@ def finance_require(handler, csrf=False):
         handler.send_json({'error': 'Anmeldung erforderlich'}, 401); return None
     if csrf and not hmac.compare_digest(handler.headers.get('X-CSRF-Token', ''), session['csrf']):
         handler.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403); return None
-    return session
-
-
-def auto_market_password_ok(value):
-    configured = os.environ.get('AUTO_MARKET_PASSWORD', '')
-    return bool(configured) and hmac.compare_digest(str(value), configured)
-
-
-def auto_market_session(handler):
-    cookie = handler.headers.get('Cookie', '')
-    sid = next((part.split('=', 1)[1] for part in cookie.split('; ') if part.startswith('auto_market_session=')), None)
-    return AUTO_MARKET_SESSIONS.get(sid)
-
-
-def auto_market_require(handler, csrf=False):
-    session = auto_market_session(handler)
-    if not session:
-        handler.send_json({'error': 'Anmeldung erforderlich'}, 401)
-        return None
-    if csrf and not hmac.compare_digest(handler.headers.get('X-CSRF-Token', ''), session['csrf']):
-        handler.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
-        return None
     return session
 
 
@@ -1052,7 +1029,7 @@ class Handler(BaseHTTPRequestHandler):
         file = ROOT / self.path.lstrip('/')
         if file.is_file() and ROOT in file.parents:
             body=file.read_bytes(); types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'text/javascript; charset=utf-8','.json':'application/json; charset=utf-8'}; self.send_response(200); self.send_header('Content-Type',types.get(file.suffix,'application/octet-stream'))
-            if parsed.path in ('/betting', '/betting.html') and not _dashboard_csrf(self):
+            if parsed.path in ('/betting', '/betting.html', '/auto-market', '/auto-market.html') and not _dashboard_csrf(self):
                 self.send_header('Set-Cookie', f'dashboard_csrf={secrets.token_urlsafe(24)}; SameSite=Strict; Path=/')
             self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         self.send_error(404)
@@ -1105,15 +1082,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(run, 200 if run.get('status') in ('todo', 'ready', 'running', 'done', 'completed', 'failed', 'blocked') else 503)
         self.send_error(404)
     def auto_market_get(self, parsed):
-        session = auto_market_require(self)
-        if not session:
-            return
         try:
             filters = auto_market_filters(parse_qs(parsed.query))
             with closing(auto_market.auto_connect()) as con:
                 row = con.execute('SELECT * FROM refresh_runs ORDER BY id DESC LIMIT 1').fetchone()
             return self.send_json({
-                'csrf': session['csrf'],
+                'csrf': _dashboard_csrf(self),
                 'profiles': list(auto_market.SEARCH_PROFILES),
                 'filters': filters,
                 'listings': auto_market.list_active_listings(**filters),
@@ -1124,34 +1098,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'error': str(exc)[:200]}, 400)
 
     def auto_market_post(self, path):
-        if path == '/api/auto-market/login':
-            try:
-                payload = json.loads(self.read_body(limit=32 * 1024) or b'{}')
-            except (ValueError, json.JSONDecodeError):
-                return self.send_json({'error': 'Ungültiges JSON'}, 400)
-            if not isinstance(payload, dict) or not auto_market_password_ok(payload.get('password', '')):
-                return self.send_json({'error': 'Passwort falsch'}, 401)
-            sid = secrets.token_urlsafe(32)
-            AUTO_MARKET_SESSIONS[sid] = {'csrf': secrets.token_urlsafe(24), 'created': datetime.now().isoformat()}
-            self.send_response(200)
-            self.send_header('Set-Cookie', f'auto_market_session={sid}; HttpOnly; SameSite=Strict; Path=/')
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-            return
-        session = auto_market_require(self, csrf=True)
-        if not session:
-            return
-        if path == '/api/auto-market/favorite':
-            try:
-                payload = json.loads(self.read_body(limit=32 * 1024) or b'{}')
-                if not isinstance(payload, dict) or not isinstance(payload.get('favorite'), bool):
-                    raise ValueError('Favoritenstatus ungültig')
-                listing_id = int(payload['listing_id'])
-                return self.send_json(auto_market.set_favorite(listing_id, payload['favorite']))
-            except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, sqlite3.Error) as exc:
-                return self.send_json({'error': str(exc)[:200]}, 400)
-        return self.send_json({'error': 'Nicht gefunden'}, 404)
+        if path != '/api/auto-market/favorite':
+            return self.send_json({'error': 'Nicht gefunden'}, 404)
+        cookie = _dashboard_csrf(self)
+        if not cookie or not hmac.compare_digest(cookie, self.headers.get('X-CSRF-Token', '')):
+            return self.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
+        try:
+            payload = json.loads(self.read_body(limit=32 * 1024) or b'{}')
+            if not isinstance(payload, dict) or not isinstance(payload.get('favorite'), bool):
+                raise ValueError('Favoritenstatus ungültig')
+            listing_id = int(payload['listing_id'])
+            return self.send_json(auto_market.set_favorite(listing_id, payload['favorite']))
+        except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, sqlite3.Error) as exc:
+            return self.send_json({'error': str(exc)[:200]}, 400)
 
     def read_body(self, limit=FINANCE_MAX_UPLOAD):
         length = int(self.headers.get('Content-Length', '0'))
