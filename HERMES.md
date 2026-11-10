@@ -10,8 +10,9 @@
 
 ## Auto Market Screener
 
-- Configure `AUTO_MARKET_SEARCH_URL` in `~/.hermes/.env`; `AUTO_MARKET_SEARCH_TOKEN` is optional.
-- The search endpoint must return JSON with a `results` list containing public listing URLs and `distance_km` values from Norderstedt.
+- No search URL is required: the worker uses AutoScout24's public, filtered search pages by default, then reads only trusted listing pages.
+- `AUTO_MARKET_SEARCH_URL` may override that default with a JSON or supported HTML endpoint returning public listing URLs; `AUTO_MARKET_SEARCH_TOKEN` remains optional.
+- Locations without a provider-supplied distance are geocoded through the public Nominatim endpoint and measured from Norderstedt; `AUTO_MARKET_GEOCODER_URL` may override it.
 - Enable the refresh schedule with `systemctl --user enable --now auto-market-refresh.timer` after installing the unit files.
 
 ## Completion

@@ -97,12 +97,14 @@ Use the selected automatic hybrid approach:
 - The existing plain HTML/CSS dashboard style is extended with one new page;
   no frontend framework or new dependency is needed.
 
-The worker uses a web-search adapter for discovery and then fetches the public
-listing pages itself. The adapter is a technical provider boundary, not a user
-password: its credentials, if required by the chosen search service, live only
-in the service environment. This balances coverage with data quality. Directly
-scraping every automotive site would be broader on paper but would be brittle
-and would make reliable field extraction difficult to maintain.
+The worker uses AutoScout24's public filtered HTML search pages for discovery by
+default, then fetches the public listing pages itself. A JSON or supported HTML
+search provider can override that default through `AUTO_MARKET_SEARCH_URL`; any
+token remains a technical service credential, not a user password. Listing
+locations without a provider distance are measured from Norderstedt through
+the public Nominatim geocoder. This balances coverage with data quality.
+Directly scraping every automotive site would be broader on paper but would be
+brittle and would make reliable field extraction difficult to maintain.
 
 ## Non-goals
 
@@ -140,7 +142,7 @@ same dashboard backend.
 ## Status
 
 Implemented: the Auto Screener has no separate password flow, the page uses
-the dashboard CSRF cookie for favorite writes, and the scheduled worker remains
-the primary discovery path. Live results remain unavailable until the web-search
-adapter is connected; the page fails closed and shows no invented listings
-without it.
+the dashboard CSRF cookie for favorite writes, and the scheduled worker uses a
+no-key AutoScout24 HTML search default plus trusted-source listing fetches. The
+page fails closed and shows no invented listings when discovery or structured
+vehicle evidence is unavailable.

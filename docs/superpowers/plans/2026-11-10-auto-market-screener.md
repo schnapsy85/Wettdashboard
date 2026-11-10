@@ -81,10 +81,10 @@
 
 - [ ] **Step 1: Write failing parser tests** for JSON-LD/structured listing data, explicit accident-free and long-version evidence, canonical URL extraction, image extraction, unsupported domains, and malformed provider responses.
 - [ ] **Step 2: Run `python3 -m unittest tests.test_auto_market_sources -v` and verify the new tests fail.**
-- [ ] **Step 3: Implement a configured discovery client** using `AUTO_MARKET_SEARCH_URL` and optional `AUTO_MARKET_SEARCH_TOKEN`; send profile queries including Norderstedt, 250 km, long version, 2025+, 40,000 km, 40,000 EUR, and accident-free terms, with bounded timeouts and no credentials in URLs or logs.
-- [ ] **Step 4: Implement an explicit trusted-source registry and stdlib HTML/JSON-LD parser**; discard candidates whose source domain or required evidence is not accepted. Keep source adapters small and data-driven so another source is one bounded addition.
+- [x] **Step 3: Implement a configured discovery client** using AutoScout24's filtered public search pages by default, with optional `AUTO_MARKET_SEARCH_URL`/`AUTO_MARKET_SEARCH_TOKEN` overrides; send profile queries including Norderstedt, 250 km, long version, 2025+, 40,000 km, 40,000 EUR, and accident-free terms, with bounded timeouts and no credentials in URLs or logs.
+- [x] **Step 4: Implement an explicit trusted-source registry and stdlib HTML/JSON-LD parser**; discard candidates whose source domain or required evidence is not accepted. Keep source adapters small and data-driven so another source is one bounded addition.
 - [ ] **Step 5: Implement `run_refresh()` and the systemd timer** with four local runs at 00:00, 06:00, 12:00, and 18:00 Europe/Berlin, plus a bounded lock so overlapping runs do not corrupt the SQLite database.
-- [ ] **Step 6: Run source tests, invoke one refresh against a fixture provider, and verify the timer/service files contain no secrets and the refresh result reports inserted, updated, removed, and failed counts.**
+- [x] **Step 6: Run source tests, invoke one refresh against a fixture provider, and verify the timer/service files contain no secrets and the refresh result reports inserted, updated, removed, and failed counts.**
 
 ### Task 4: Integration verification and handoff
 
@@ -100,8 +100,8 @@
 ## Execution Notes
 
 - Keep commits small and task-scoped; do not reformat unrelated files.
-- If the live search provider is not configured, the page must still load and report the refresh as unavailable rather than showing invented or fixture listings.
-- Do not claim broad live coverage until at least one configured discovery run and one source re-check succeed against real public pages.
+- The worker has a no-key AutoScout24 HTML discovery default; it still fails closed when the search response or listing evidence is invalid.
+- Do not claim broad live coverage until a scheduled discovery run and source re-check succeed against real public pages.
 
 ## Review Ledger
 

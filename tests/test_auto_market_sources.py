@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from base64 import urlsafe_b64encode
 from pathlib import Path
 from unittest.mock import patch
 
@@ -88,6 +89,59 @@ class AutoMarketSourcesTests(unittest.TestCase):
         self.assertEqual(len(candidates), 2)
         self.assertEqual(candidates[0]['distance_km'], 42)
         self.assertIn('Norderstedt', candidates[0]['location'])
+
+    def test_discovery_uses_public_source_search_without_provider_configuration(self):
+        os.environ.pop('AUTO_MARKET_SEARCH_URL', None)
+        search_body = '''
+        <html><body>
+        <script type="application/json">{"url":"/angebote/vw-multivan-lang-456"}</script>
+        </body></html>
+        '''
+
+        def opener(request, timeout=0):
+            target = request.full_url if hasattr(request, 'full_url') else str(request)
+            return FakeResponse(search_body if 'autoscout24.de/lst/' in target else LISTING_HTML)
+
+        with patch.object(auto_market_sources.urllib.request, 'urlopen', side_effect=opener):
+            candidates = auto_market_sources.discover_candidates()
+
+        self.assertEqual(len(candidates), 2)
+
+    def test_discovery_parses_html_search_results_when_configured(self):
+        os.environ['AUTO_MARKET_SEARCH_URL'] = 'https://html.duckduckgo.com/html/'
+        search_body = '''
+        <html><body>
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fmobile.de%2Fangebot%2F456">VW Treffer</a>
+        </body></html>
+        '''
+
+        def opener(request, timeout=0):
+            target = request.full_url if hasattr(request, 'full_url') else str(request)
+            return FakeResponse(search_body if 'duckduckgo.com' in target else LISTING_HTML)
+
+        with patch.object(auto_market_sources.urllib.request, 'urlopen', side_effect=opener):
+            candidates = auto_market_sources.discover_candidates()
+
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(candidates[0]['url'], 'https://mobile.de/angebot/456')
+
+    def test_discovery_parses_bing_html_search_results(self):
+        os.environ['AUTO_MARKET_SEARCH_URL'] = 'https://www.bing.com/search'
+        encoded_url = urlsafe_b64encode(b'https://mobile.de/angebot/456').decode().rstrip('=')
+        search_body = '''
+        <html><body>
+        <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=a1%s">VW Treffer</a></h2></li>
+        </body></html>
+        ''' % encoded_url
+
+        def opener(request, timeout=0):
+            target = request.full_url if hasattr(request, 'full_url') else str(request)
+            return FakeResponse(search_body if 'bing.com' in target else LISTING_HTML)
+
+        with patch.object(auto_market_sources.urllib.request, 'urlopen', side_effect=opener):
+            candidates = auto_market_sources.discover_candidates()
+
+        self.assertEqual(len(candidates), 2)
 
     def test_malformed_provider_response_fails_closed(self):
         with patch.object(auto_market_sources.urllib.request, 'urlopen', return_value=FakeResponse('{not-json')):
