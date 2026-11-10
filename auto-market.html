@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Auto Screener | Hermes Agent</title>
+  <style>
+    :root{--bg:#07111f;--panel:#0d1b2c;--panel-2:#11253a;--text:#eff8ff;--muted:#9bb0c5;--line:#24405a;--cyan:#35d9f5;--amber:#ffbc57;--green:#55e39a;--red:#ff9c9c}
+    *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#123550 0,transparent 34%),var(--bg);color:var(--text);font:14px/1.45 Inter,Manrope,system-ui,sans-serif}.app{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:100vh}aside{padding:18px 14px;border-right:1px solid var(--line);background:#081522e6}.brand{margin:0 8px 24px;font-size:20px;font-weight:800}.brand span{color:var(--cyan)}nav a{display:flex;align-items:center;gap:10px;margin:4px 0;padding:10px 11px;border-radius:10px;color:var(--muted);text-decoration:none}nav a:hover,nav a.active{color:var(--text);background:#1598b833;border-left:2px solid var(--cyan)}.nav-icon{width:20px;text-align:center;color:var(--cyan)}.agent{margin-top:26px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}.online{color:var(--green);font-size:12px}main{min-width:0;padding:22px clamp(16px,4vw,42px) 42px}.page-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.eyebrow{margin:0 0 3px;color:var(--cyan);font:700 11px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase}.page-header h1{margin:0;font-size:clamp(24px,3vw,34px);line-height:1.1}.page-header p:last-child{margin:6px 0 0;color:var(--muted)}.live{color:var(--green);font:700 11px ui-monospace,monospace;white-space:nowrap}.panel{min-width:0;padding:16px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(145deg,var(--panel-2),var(--panel));box-shadow:0 14px 35px #0003}.panel h2{margin:0 0 7px;font-size:16px}.muted{color:var(--muted)}.hidden{display:none!important}.login-panel{max-width:460px;border-color:#ffbc5766}.form-row{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.field{display:grid;gap:5px;min-width:150px}.field label{color:var(--amber);font-weight:700;font-size:12px}.field input{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:#07111f;color:var(--text);font:inherit}button{border:1px solid #35d9f5aa;border-radius:9px;padding:10px 13px;background:#116b7c;color:#fff;font-weight:800;cursor:pointer}button:hover{background:#158da2}button:disabled{cursor:not-allowed;opacity:.6}.error{color:var(--red);min-height:22px}.toolbar{display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}.filters{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.filter-field{width:150px}.refresh-state{color:var(--muted);font-size:12px;text-align:right}.profile-section{margin-top:18px}.profile-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}.profile-heading h2{margin:0}.count{color:var(--cyan);font:700 12px ui-monospace,monospace}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}.listing-card{display:flex;flex-direction:column;overflow:hidden;padding:0}.listing-image{display:block;width:100%;height:170px;object-fit:cover;background:#0a1625}.image-fallback{display:grid;place-items:center;height:170px;color:var(--muted);background:linear-gradient(135deg,#12253a,#091421);font-weight:800}.listing-content{display:grid;gap:9px;padding:14px}.listing-title{display:flex;justify-content:space-between;gap:8px;align-items:start}.listing-title h3{margin:0;font-size:16px;line-height:1.2}.favorite{flex:none;padding:6px 9px;border-color:#ffbc57aa;background:transparent;color:var(--amber)}.favorite[aria-pressed=true]{background:#a76d27;color:#fff}.price{color:var(--amber);font-size:20px;font-weight:900}.facts{display:grid;grid-template-columns:1fr 1fr;gap:5px 12px;margin:0}.facts dt{color:var(--muted)}.facts dd{margin:0;text-align:right;font-weight:700}.evidence{padding:8px 10px;border-left:2px solid var(--green);background:#55e39a12;color:#c9ffe1;font-size:12px}.offer-link{color:var(--cyan);font-weight:800;text-decoration:none}.offer-link:hover{text-decoration:underline}.empty{padding:20px;color:var(--muted);border:1px dashed var(--line);border-radius:10px}@media(max-width:640px){.app{display:block}.app aside{padding:13px 14px;border-right:0;border-bottom:1px solid var(--line)}.brand{display:inline-block;margin:0 7px 12px;font-size:18px}nav a{padding:8px 10px}main{padding:16px 13px 28px}.page-header{display:block}.live{display:block;margin-top:8px}.toolbar{display:block}.filters{margin-bottom:12px}.filter-field{width:100%}.refresh-state{text-align:left}.cards{grid-template-columns:1fr}.listing-image,.image-fallback{height:190px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">Hermes <span>Agent</span></div>
+      <nav aria-label="Hauptnavigation">
+        <a href="/"><span class="nav-icon">&#8962;</span>Command Center</a>
+        <a class="active" href="/auto-market" aria-current="page"><span class="nav-icon">&#128663;</span>Auto Screener</a>
+        <a href="/betting"><span class="nav-icon">&#9672;</span>Betting Lab</a>
+        <a href="/finanzen.html"><span class="nav-icon">&#8364;</span>Finanzen</a>
+        <a href="/trading"><span class="nav-icon">&#8599;</span>Trading Testnet</a>
+      </nav>
+      <div class="agent"><strong>Hermes online</strong><span class="online">&bull; Gateway aktiv</span></div>
+    </aside>
+    <main>
+      <header class="page-header">
+        <div><p class="eyebrow">Market Screener</p><h1>Auto Screener</h1><p>Gepr&uuml;fte Angebote f&uuml;r deine zwei langen Bus-Profile rund um Norderstedt.</p></div>
+        <span class="live">4X T&Auml;GLICH</span>
+      </header>
+
+      <section id="login-panel" class="panel login-panel" aria-labelledby="login-title">
+        <h2 id="login-title">Dashboard-Zugang</h2>
+        <p class="muted">Melde dich an, damit Favoriten auf allen Ger&auml;ten verf&uuml;gbar bleiben.</p>
+        <form id="login-form" class="form-row">
+          <div class="field"><label for="password">Passwort</label><input id="password" type="password" autocomplete="current-password" required></div>
+          <button type="submit">Anmelden</button>
+        </form>
+        <p id="login-error" class="error" role="alert"></p>
+      </section>
+
+      <section id="app-panel" class="hidden" aria-live="polite">
+        <div class="toolbar">
+          <form id="filter-form" class="filters" aria-label="Screener-Filter">
+            <div class="field filter-field"><label for="max-price">Maximalpreis (&euro;)</label><input id="max-price" type="number" min="1" step="1000" required></div>
+            <div class="field filter-field"><label for="max-distance">Maximale Entfernung (km)</label><input id="max-distance" type="number" min="1" step="10" required></div>
+            <button type="submit">Filter anwenden</button>
+          </form>
+          <div id="refresh-state" class="refresh-state"></div>
+        </div>
+        <div id="profiles"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/auto-market.js"></script>
+</body>
+</html>

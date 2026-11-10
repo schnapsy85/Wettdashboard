@@ -8,6 +8,12 @@
 - Browser QA: `/home/yash/browser-qa/venv/bin/python /home/yash/browser-qa/run_dashboard_qa.py`
 - Snapshot timer: `betting-snapshot.timer`, paper-only; never enable Echtgeld or Mainnet trading.
 
+## Auto Market Screener
+
+- Configure `AUTO_MARKET_PASSWORD` and `AUTO_MARKET_SEARCH_URL` in `~/.hermes/.env`; `AUTO_MARKET_SEARCH_TOKEN` is optional.
+- The search endpoint must return JSON with a `results` list containing public listing URLs and `distance_km` values from Norderstedt.
+- Enable the refresh schedule with `systemctl --user enable --now auto-market-refresh.timer` after installing the unit files.
+
 ## Completion
 
 1. Read `AGENTS.md`, `HERMES.md`, `git status`, and relevant diffs before editing.

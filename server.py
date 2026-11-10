@@ -2,11 +2,13 @@
 import csv, hashlib, hmac, io, json, math, os, secrets, shutil, socket, sqlite3, subprocess, time, urllib.request
 from collections import defaultdict
 from contextlib import closing
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import parse_qs, urlencode, urlsplit, quote
+from zoneinfo import ZoneInfo
 import hyperliquid_bot
 import betting_forecast
 import betting_sources
+import auto_market
 
 FANTASY_API = os.environ.get('FANTASY_API_URL', 'http://127.0.0.1:8091').rstrip('/')
 
@@ -70,6 +72,7 @@ FINANCE_BACKUP_DIR = ROOT / 'backups'
 FINANCE_SESSIONS = {}
 FINANCE_PREVIEWS = {}
 FINANCE_MAX_UPLOAD = 5 * 1024 * 1024
+AUTO_MARKET_SESSIONS = {}
 
 FINANCE_ACCOUNTS = (
     ('Trade Republic Kreditkarte', 'creditcard'), ('comdirect Girokonto', 'checking'),
@@ -120,6 +123,53 @@ def finance_require(handler, csrf=False):
     if csrf and not hmac.compare_digest(handler.headers.get('X-CSRF-Token', ''), session['csrf']):
         handler.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403); return None
     return session
+
+
+def auto_market_password_ok(value):
+    configured = os.environ.get('AUTO_MARKET_PASSWORD', '')
+    return bool(configured) and hmac.compare_digest(str(value), configured)
+
+
+def auto_market_session(handler):
+    cookie = handler.headers.get('Cookie', '')
+    sid = next((part.split('=', 1)[1] for part in cookie.split('; ') if part.startswith('auto_market_session=')), None)
+    return AUTO_MARKET_SESSIONS.get(sid)
+
+
+def auto_market_require(handler, csrf=False):
+    session = auto_market_session(handler)
+    if not session:
+        handler.send_json({'error': 'Anmeldung erforderlich'}, 401)
+        return None
+    if csrf and not hmac.compare_digest(handler.headers.get('X-CSRF-Token', ''), session['csrf']):
+        handler.send_json({'error': 'CSRF-Prüfung fehlgeschlagen'}, 403)
+        return None
+    return session
+
+
+def auto_market_filters(query):
+    def bounded(name, default, maximum):
+        raw = query.get(name, [str(default)])[0]
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f'{name} ungültig')
+        if value < 1 or value > maximum:
+            raise ValueError(f'{name} außerhalb des erlaubten Bereichs')
+        return value
+    return {
+        'max_price_eur': bounded('max_price_eur', auto_market.DEFAULT_MAX_PRICE_EUR, 1000000),
+        'max_distance_km': bounded('max_distance_km', auto_market.DEFAULT_MAX_DISTANCE_KM, 5000),
+    }
+
+
+def auto_market_next_refresh():
+    now = datetime.now(ZoneInfo('Europe/Berlin'))
+    for hour in (0, 6, 12, 18):
+        candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if candidate > now:
+            return candidate.isoformat()
+    return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 def finance_date(value):
     value = value.strip()
@@ -965,6 +1015,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(body)))
             self.end_headers(); self.wfile.write(body); return
+        if parsed.path == '/api/auto-market/state':
+            return self.auto_market_get(parsed)
         if parsed.path == '/finanzen.html': self.path = '/finanzen.html'
         if parsed.path.startswith('/api/finance/'):
             return self.finance_get(parsed.path)
@@ -995,6 +1047,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == '/trading': self.path='/trading.html'
         if parsed.path == '/api/odds': return self.send_json(odds_feed())
         if parsed.path == '/betting': self.path='/betting.html'
+        if parsed.path == '/auto-market': self.path='/auto-market.html'
         if parsed.path == '/': self.path='/index.html'
         file = ROOT / self.path.lstrip('/')
         if file.is_file() and ROOT in file.parents:
@@ -1005,6 +1058,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
     def do_POST(self):
         parsed = urlsplit(self.path)
+        if parsed.path.startswith('/api/auto-market/'):
+            return self.auto_market_post(parsed.path)
         if parsed.path.startswith('/api/finance/'):
             return self.finance_post(parsed.path)
         if parsed.path in ('/api/engineering-status', '/api/telemetry'):
@@ -1049,9 +1104,58 @@ class Handler(BaseHTTPRequestHandler):
                 _remember_hermes_task(run['task_id'], cookie)
             return self.send_json(run, 200 if run.get('status') in ('todo', 'ready', 'running', 'done', 'completed', 'failed', 'blocked') else 503)
         self.send_error(404)
-    def read_body(self):
+    def auto_market_get(self, parsed):
+        session = auto_market_require(self)
+        if not session:
+            return
+        try:
+            filters = auto_market_filters(parse_qs(parsed.query))
+            with closing(auto_market.auto_connect()) as con:
+                row = con.execute('SELECT * FROM refresh_runs ORDER BY id DESC LIMIT 1').fetchone()
+            return self.send_json({
+                'csrf': session['csrf'],
+                'profiles': list(auto_market.SEARCH_PROFILES),
+                'filters': filters,
+                'listings': auto_market.list_active_listings(**filters),
+                'last_refresh': dict(row) if row else None,
+                'next_refresh': auto_market_next_refresh(),
+            })
+        except (TypeError, ValueError, sqlite3.Error) as exc:
+            return self.send_json({'error': str(exc)[:200]}, 400)
+
+    def auto_market_post(self, path):
+        if path == '/api/auto-market/login':
+            try:
+                payload = json.loads(self.read_body(limit=32 * 1024) or b'{}')
+            except (ValueError, json.JSONDecodeError):
+                return self.send_json({'error': 'Ungültiges JSON'}, 400)
+            if not isinstance(payload, dict) or not auto_market_password_ok(payload.get('password', '')):
+                return self.send_json({'error': 'Passwort falsch'}, 401)
+            sid = secrets.token_urlsafe(32)
+            AUTO_MARKET_SESSIONS[sid] = {'csrf': secrets.token_urlsafe(24), 'created': datetime.now().isoformat()}
+            self.send_response(200)
+            self.send_header('Set-Cookie', f'auto_market_session={sid}; HttpOnly; SameSite=Strict; Path=/')
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
+        session = auto_market_require(self, csrf=True)
+        if not session:
+            return
+        if path == '/api/auto-market/favorite':
+            try:
+                payload = json.loads(self.read_body(limit=32 * 1024) or b'{}')
+                if not isinstance(payload, dict) or not isinstance(payload.get('favorite'), bool):
+                    raise ValueError('Favoritenstatus ungültig')
+                listing_id = int(payload['listing_id'])
+                return self.send_json(auto_market.set_favorite(listing_id, payload['favorite']))
+            except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, sqlite3.Error) as exc:
+                return self.send_json({'error': str(exc)[:200]}, 400)
+        return self.send_json({'error': 'Nicht gefunden'}, 404)
+
+    def read_body(self, limit=FINANCE_MAX_UPLOAD):
         length = int(self.headers.get('Content-Length', '0'))
-        if length > FINANCE_MAX_UPLOAD: raise ValueError('Anfrage zu groß')
+        if length > limit: raise ValueError('Anfrage zu groß')
         return self.rfile.read(length)
     def finance_get(self, path):
         if path == '/api/finance/login': return self.send_json({'authenticated': bool(finance_session(self))})
