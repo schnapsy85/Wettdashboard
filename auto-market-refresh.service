@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Hermes Auto Market Screener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/yash/dashboard
+EnvironmentFile=-%h/.hermes/.env
+ExecStart=/usr/bin/python3 /home/yash/dashboard/auto_market_refresh.py

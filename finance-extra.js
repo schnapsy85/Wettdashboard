@@ -18,4 +18,4 @@ load = async () => {
     return row;
   }));
 };
-load();
+if(!document.querySelector('#app').classList.contains('hidden'))load();

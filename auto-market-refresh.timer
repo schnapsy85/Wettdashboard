@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh Hermes Auto Market Screener four times daily
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:00:00 Europe/Berlin
+Persistent=true
+Unit=auto-market-refresh.service
+
+[Install]
+WantedBy=timers.target
